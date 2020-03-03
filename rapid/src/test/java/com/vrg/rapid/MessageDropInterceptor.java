@@ -14,6 +14,7 @@
 package com.vrg.rapid;
 
 import com.vrg.rapid.pb.RapidRequest;
+import com.vrg.rapid.pb.RapidResponse;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,20 +49,44 @@ class ServerDropInterceptors {
  * Drops messages at the client of a gRPC call. Used for testing.
  */
 class ClientInterceptors {
-    static class Delayer {
+    static class RequestDelayer {
         private final CountDownLatch latch;
         private final RapidRequest.ContentCase requestCase;
 
         /**
          * Drops messages of a specific type until the latch permits.
          */
-        Delayer(final CountDownLatch latch, final RapidRequest.ContentCase requestCase) {
+        RequestDelayer(final CountDownLatch latch, final RapidRequest.ContentCase requestCase) {
             this.latch = latch;
             this.requestCase = requestCase;
         }
 
         boolean filter(final RapidRequest request) {
             if (request.getContentCase().equals(requestCase)) {
+                try {
+                    latch.await();
+                } catch (final InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return true;
+        }
+    }
+
+    static class ResponseDelayer {
+        private final CountDownLatch latch;
+        private final RapidResponse.ContentCase responseCase;
+
+        /**
+         * Drops messages of a specific type until the latch permits.
+         */
+        ResponseDelayer(final CountDownLatch latch, final RapidResponse.ContentCase responseCase) {
+            this.latch = latch;
+            this.responseCase = responseCase;
+        }
+
+        boolean filter(final RapidResponse response) {
+            if (response.getContentCase().equals(responseCase)) {
                 try {
                     latch.await();
                 } catch (final InterruptedException e) {

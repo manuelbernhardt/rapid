@@ -59,8 +59,12 @@ public class ClusterTest {
     private static final Logger NETTY_LOGGER;
     private final Map<Endpoint, Cluster> instances = new ConcurrentHashMap<>();
     private final Map<Endpoint, StaticFailureDetector.Factory> staticFds = new ConcurrentHashMap<>();
-    private final Map<Endpoint, List<ServerDropInterceptors.FirstN>> serverInterceptors = new ConcurrentHashMap<>();
-    private final Map<Endpoint, List<ClientInterceptors.Delayer>> clientInterceptors = new ConcurrentHashMap<>();
+    private final Map<Endpoint, List<ServerDropInterceptors.FirstN>> serverInterceptors =
+            new ConcurrentHashMap<>();
+    private final Map<Endpoint, List<ClientInterceptors.RequestDelayer>> clientRequestInterceptors =
+            new ConcurrentHashMap<>();
+    private final Map<Endpoint, List<ClientInterceptors.ResponseDelayer>> clientResponseInterceptors =
+            new ConcurrentHashMap<>();
     private boolean useStaticFd = false;
     private boolean addMetadata = true;
     @Nullable private Random random = null;
@@ -104,7 +108,8 @@ public class ClusterTest {
         addMetadata = true;
         staticFds.clear();
         serverInterceptors.clear();
-        clientInterceptors.clear();
+        clientRequestInterceptors.clear();
+        clientResponseInterceptors.clear();
     }
 
     @After
@@ -401,7 +406,7 @@ public class ClusterTest {
         // Drop join-phase-2 attempts by nextNode such that it re-attempts a join under a new settings
         createCluster(1, seedEndpoint);
         // The next host to join will have its join-phase2-message blocked.
-        final CountDownLatch latch = blockAtClient(joinerEndpoint, RapidRequest.ContentCase.JOINMESSAGE);
+        final CountDownLatch latch = blockRequestsAtClient(joinerEndpoint, RapidRequest.ContentCase.JOINMESSAGE);
         extendClusterNonBlocking(1, seedEndpoint);
         // The following node is now free to join. This will render the settings received by the previous
         // joiner node stale
@@ -409,7 +414,29 @@ public class ClusterTest {
         latch.countDown();
         waitAndVerifyAgreement(3, 15, 1000);
         verifyNumClusterInstances(3);
+        verifyClusterMetadata(3);
     }
+
+    /**
+     * Simulate a node attempting to join and issuing several join attempts as it did not receive the response
+     */
+//    @Test(timeout = 30000)
+//    public void phase2JoinAttemptRetryAfterTimeout() throws IOException, InterruptedException {
+//        final Endpoint seedEndpoint = Utils.hostFromParts("127.0.0.1", basePort);
+//        final Endpoint joinerEndpoint = Utils.hostFromParts("127.0.0.1", basePort + 1);
+//        // Drop join-phase-2 attempts by nextNode such that it re-attempts a join under a new settings
+//        createCluster(1, seedEndpoint);
+//        // The next host to join will have its join-phase2-message response blocked.
+//        final CountDownLatch latch = blockResponseAtClient(joinerEndpoint, RapidResponse.ContentCase.JOINRESPONSE);
+//        extendClusterNonBlocking(1, seedEndpoint);
+//        // The following node is now free to join. This will render the settings received by the previous
+//        // joiner node stale
+//        extendCluster(1, seedEndpoint);
+//        latch.countDown();
+//        waitAndVerifyAgreement(3, 15, 1000);
+//        verifyNumClusterInstances(3);
+//        verifyClusterMetadata(3);
+//    }
 
     /**
      * Shutdown a node and rejoin multiple times.
@@ -687,6 +714,11 @@ public class ClusterTest {
     private void verifyClusterMetadata(final int expectedSize) {
         for (final Cluster cluster : instances.values()) {
             assertEquals(cluster.getClusterMetadata().size(), expectedSize);
+            if (addMetadata) {
+                cluster.getClusterMetadata().forEach((k, v) -> {
+                    assertEquals(1, v.getMetadataCount());
+                });
+            }
         }
     }
 
@@ -761,13 +793,17 @@ public class ClusterTest {
                                                           serverInterceptors.get(endpoint),
                                                                   settings.getUseInProcessTransport()));
         }
-        if (clientInterceptors.containsKey(endpoint)) {
+        if (clientRequestInterceptors.containsKey(endpoint) || clientResponseInterceptors.containsKey(endpoint)) {
+            final List<ClientInterceptors.RequestDelayer> requestInterceptors =
+                    clientRequestInterceptors.get(endpoint);
+            final List<ClientInterceptors.ResponseDelayer> responseInterceptors =
+                    clientResponseInterceptors.get(endpoint);
             builder = builder.setMessagingClientAndServer(new TestingGrpcClient(endpoint, settings,
-                                                                                clientInterceptors.get(endpoint)),
-                    new TestingGrpcServer(endpoint,
-                            Collections.emptyList(),
-                            settings.getUseInProcessTransport()));
+                            requestInterceptors == null ? new ArrayList<>() : requestInterceptors,
+                            responseInterceptors == null ? new ArrayList<>() : responseInterceptors),
+                    new TestingGrpcServer(endpoint, Collections.emptyList(), settings.getUseInProcessTransport()));
         }
+
         if (addMetadata) {
             final ByteString byteString = ByteString.copyFrom(endpoint.toString(), Charset.defaultCharset());
             builder = builder.setMetadata(Collections.singletonMap("Key", byteString));
@@ -784,12 +820,22 @@ public class ClusterTest {
     }
 
     // Helper that delays requests of a given type at the client
-    private <T, E> CountDownLatch blockAtClient(final Endpoint endpoint, final RapidRequest.ContentCase messageType) {
+    private <T, E> CountDownLatch blockRequestsAtClient(final Endpoint endpoint,
+                                                        final RapidRequest.ContentCase messageType) {
         final CountDownLatch latch = new CountDownLatch(1);
-        clientInterceptors.computeIfAbsent(endpoint, (k) -> new ArrayList<>(1))
-                .add(new ClientInterceptors.Delayer(latch, messageType));
+        clientRequestInterceptors.computeIfAbsent(endpoint, (k) -> new ArrayList<>(1))
+                .add(new ClientInterceptors.RequestDelayer(latch, messageType));
         return latch;
     }
+
+    // Helper that delays responses of a given type at the client
+    // private <T, E> CountDownLatch blockResponseAtClient(final Endpoint endpoint,
+    //                                                     final RapidResponse.ContentCase messageType) {
+    //     final CountDownLatch latch = new CountDownLatch(1);
+    //     clientResponseInterceptors.computeIfAbsent(endpoint, (k) -> new ArrayList<>(1))
+    //             .add(new ClientInterceptors.ResponseDelayer(latch, messageType));
+    //     return latch;
+    // }
 
     // This speeds up the retry attempts during the join protocol
     private void useShortJoinTimeouts() {
