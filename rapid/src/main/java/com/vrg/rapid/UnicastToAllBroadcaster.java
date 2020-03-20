@@ -43,7 +43,8 @@ final class UnicastToAllBroadcaster implements IBroadcaster {
 
     @Override
     @CanIgnoreReturnValue
-    public synchronized List<ListenableFuture<RapidResponse>> broadcast(final RapidRequest msg) {
+    public synchronized List<ListenableFuture<RapidResponse>> broadcast(final RapidRequest msg,
+                                                                        final long configurationId) {
         final List<ListenableFuture<RapidResponse>> futures = new ArrayList<>(recipients.size());
         for (final Endpoint recipient: recipients) {
             futures.add(messagingClient.sendMessageBestEffort(recipient, msg));

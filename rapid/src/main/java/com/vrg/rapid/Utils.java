@@ -15,6 +15,8 @@ package com.vrg.rapid;
 
 import com.google.common.net.HostAndPort;
 import com.google.protobuf.ByteString;
+import com.google.common.util.concurrent.Futures;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.google.protobuf.GeneratedMessageV3;
 import com.google.protobuf.TextFormat;
 import com.vrg.rapid.pb.BatchedAlertMessage;
@@ -41,6 +43,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Future;
 
 /**
  * Utility methods to convert protobuf types
@@ -198,6 +201,11 @@ final class Utils {
         return RapidResponse.newBuilder().setProbeResponse(msg).build();
     }
 
+
+    @CanIgnoreReturnValue
+    static <T> Future<T> ignoreFuture(final Future future) {
+        return Futures.immediateFuture(null);
+    }
 
     /**
      * Used to order endpoints in the different rings.

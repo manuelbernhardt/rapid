@@ -115,16 +115,18 @@ public final class MembershipService {
     MembershipService(final Endpoint myAddr, final MultiNodeCutDetector cutDetection,
                       final MembershipView membershipView, final SharedResources sharedResources,
                       final ISettings settings, final IMessagingClient messagingClient,
-                      final IEdgeFailureDetectorFactory edgeFailureDetector) {
+                      final IEdgeFailureDetectorFactory edgeFailureDetector,
+                      final IBroadcaster broadcaster) {
         this(myAddr, cutDetection, membershipView, sharedResources, settings, messagingClient,
-             edgeFailureDetector, Collections.emptyMap(), new EnumMap<>(ClusterEvents.class));
+             edgeFailureDetector, Collections.emptyMap(), new EnumMap<>(ClusterEvents.class), broadcaster);
     }
 
     MembershipService(final Endpoint myAddr, final MultiNodeCutDetector cutDetection,
                       final MembershipView membershipView, final SharedResources sharedResources,
                       final ISettings settings, final IMessagingClient messagingClient,
                       final IEdgeFailureDetectorFactory edgeFailureDetector, final Map<Endpoint, Metadata> metadataMap,
-                      final Map<ClusterEvents, List<BiConsumer<Long, List<NodeStatusChange>>>> subscriptions) {
+                      final Map<ClusterEvents, List<BiConsumer<Long, List<NodeStatusChange>>>> subscriptions,
+                      final IBroadcaster broadcaster) {
         this.myAddr = myAddr;
         this.settings = settings;
         this.membershipView = membershipView;
@@ -133,7 +135,7 @@ public final class MembershipService {
         this.metadataManager = new MetadataManager();
         this.metadataManager.addMetadata(metadataMap);
         this.messagingClient = messagingClient;
-        this.broadcaster = new UnicastToAllBroadcaster(messagingClient);
+        this.broadcaster = broadcaster;
         this.subscriptions = subscriptions;
         this.fdFactory = edgeFailureDetector;
 
@@ -184,6 +186,8 @@ public final class MembershipService {
                 return handleConsensusMessages(msg);
             case LEAVEMESSAGE:
                 return handleLeaveMessage(msg);
+            case BROADCASTINGMESSAGE:
+                return handleBroadcastingMessage(msg);
             case CONTENT_NOT_SET:
             default:
                 throw new IllegalArgumentException("Unidentified RapidRequest type " + msg.getContentCase());
@@ -356,6 +360,28 @@ public final class MembershipService {
     private ListenableFuture<RapidResponse> handleLeaveMessage(final RapidRequest request) {
         final SettableFuture<RapidResponse> future = SettableFuture.create();
         edgeFailureNotification(request.getLeaveMessage().getSender(), membershipView.getCurrentConfigurationId());
+        future.set(null);
+        return future;
+    }
+
+    private ListenableFuture<RapidResponse> handleBroadcastingMessage(final RapidRequest request) {
+        final SettableFuture<RapidResponse> future = SettableFuture.create();
+
+        // only broadcast
+        if (request.getBroadcastingMessage().getConfigurationId() == membershipView.getCurrentConfigurationId()) {
+            final List<Endpoint> recipients = membershipView.getRing(0);
+            for (final Endpoint recipient : recipients) {
+                // remove ourselves since we don't want to try and send this to ourselves
+                // through the messaging implementation
+                if (!recipient.equals(myAddr)) {
+                    messagingClient.sendMessageBestEffort(recipient, request.getBroadcastingMessage().getMessage());
+                }
+            }
+
+            // we know for a fact that we're part of the recipients or else we couldn't have gotten this message
+            Utils.ignoreFuture(handleMessage(request.getBroadcastingMessage().getMessage()));
+
+        }
         future.set(null);
         return future;
     }
@@ -606,7 +632,7 @@ public final class MembershipService {
                             .setSender(myAddr)
                             .addAllMessages(messages)
                             .build();
-                    broadcaster.broadcast(Utils.toRapidRequest(batched));
+                    broadcaster.broadcast(Utils.toRapidRequest(batched), membershipView.getCurrentConfigurationId());
                 }
             }
             finally {

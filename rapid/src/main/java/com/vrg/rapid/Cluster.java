@@ -17,6 +17,7 @@ import com.google.common.net.HostAndPort;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.protobuf.ByteString;
+import com.vrg.rapid.messaging.IBroadcaster;
 import com.vrg.rapid.messaging.IMessagingClient;
 import com.vrg.rapid.messaging.IMessagingServer;
 import com.vrg.rapid.messaging.impl.GrpcClient;
@@ -43,12 +44,15 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BiConsumer;
+import java.util.stream.Collectors;
 
 /**
  * The public API for Rapid. Users create Cluster objects using either Cluster.start()
@@ -162,15 +166,18 @@ public final class Cluster {
     public static class Builder {
         private final Endpoint listenAddress;
         @Nullable private IEdgeFailureDetectorFactory edgeFailureDetector = null;
+        private Set<Endpoint> broadcastingNodes = new HashSet<>();
         private Metadata metadata = Metadata.getDefaultInstance();
         private Settings settings = new Settings();
         private final Map<ClusterEvents, List<BiConsumer<Long, List<NodeStatusChange>>>> subscriptions =
                 new EnumMap<>(ClusterEvents.class);
 
+
         // These fields are initialized at the beginning of start() and join()
         @Nullable private IMessagingClient messagingClient = null;
         @Nullable private IMessagingServer messagingServer = null;
         @Nullable private SharedResources sharedResources = null;
+        @Nullable private IBroadcaster broadcaster = null;
 
         /**
          * Instantiates a builder for a Rapid Cluster node that will listen on the given {@code listenAddress}
@@ -248,6 +255,19 @@ public final class Cluster {
         }
 
         /**
+         * Sets an optional node that will broadcast messages to all cluster nodes on their behalf
+         */
+        public Builder setBroadcastingNodes(final List<HostAndPort> broadcastingNodes) {
+            this.broadcastingNodes = broadcastingNodes.stream().map(hostAndPort -> {
+                return Endpoint.newBuilder()
+                        .setHostname(ByteString.copyFromUtf8(hostAndPort.getHost()))
+                        .setPort(hostAndPort.getPort())
+                        .build();
+            }).collect(Collectors.toSet());
+            return this;
+        }
+
+        /**
          * Start a cluster without joining. Required to bootstrap a seed node.
          *
          * @throws IOException Thrown if we cannot successfully start a server
@@ -273,7 +293,8 @@ public final class Cluster {
                                                     : Collections.emptyMap();
             final MembershipService membershipService = new MembershipService(listenAddress,
                     cutDetector, membershipView, sharedResources, settings,
-                                            messagingClient, edgeFailureDetector, metadataMap, subscriptions);
+                                            messagingClient, edgeFailureDetector, metadataMap, subscriptions,
+                    new UnicastToAllBroadcaster(messagingClient));
             messagingServer.setMembershipService(membershipService);
             messagingServer.start();
             return new Cluster(messagingServer, membershipService, sharedResources, listenAddress);
@@ -460,9 +481,13 @@ public final class Cluster {
             final MultiNodeCutDetector cutDetector = new MultiNodeCutDetector(K, H, L);
             edgeFailureDetector = edgeFailureDetector != null ? edgeFailureDetector
                                                   : new PingPongFailureDetector.Factory(listenAddress, messagingClient);
+            final IBroadcaster broadcaster = this.broadcastingNodes.isEmpty() ?
+                    new UnicastToAllBroadcaster(messagingClient)
+                    : new ForwardingBroadcaster(messagingClient, broadcastingNodes, listenAddress);
             final MembershipService membershipService =
                     new MembershipService(listenAddress, cutDetector, membershipViewFinal,
-                           sharedResources, settings, messagingClient, edgeFailureDetector, allMetadata, subscriptions);
+                           sharedResources, settings, messagingClient, edgeFailureDetector,
+                            allMetadata, subscriptions, broadcaster);
             messagingServer.setMembershipService(membershipService);
             if (LOG.isTraceEnabled()) {
                 LOG.trace("{} has observers {}", listenAddress,

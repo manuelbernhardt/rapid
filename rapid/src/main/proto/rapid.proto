@@ -31,6 +31,7 @@ message RapidRequest
         Phase2aMessage phase2aMessage = 8;
         Phase2bMessage phase2bMessage = 9;
         LeaveMessage leaveMessage = 10;
+        BroadcastingMessage broadcastingMessage = 11;
    }
 }
 
@@ -185,6 +186,23 @@ message Metadata
 message LeaveMessage
 {
     Endpoint sender = 1;
+}
+
+// ******* Broascasting protocol *******
+
+message BroadcastingMessage
+{
+    RapidRequest message = 1;
+    int64 configurationId = 2;
+}
+
+message BroadcastingResponse {
+    BroadcastingStatus status = 1;
+}
+
+enum BroadcastingStatus {
+    ACCEPTED = 0;
+    CONFIGURATION_CHANGED = 1;
 }
 
 // ******* Used by simple probing failure detector *******
