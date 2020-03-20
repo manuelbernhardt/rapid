@@ -17,6 +17,7 @@ import com.google.common.net.HostAndPort;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.protobuf.ByteString;
+import com.vrg.rapid.messaging.IBroadcaster;
 import com.vrg.rapid.messaging.IMessagingClient;
 import com.vrg.rapid.messaging.IMessagingServer;
 import com.vrg.rapid.messaging.impl.GrpcClient;
@@ -49,6 +50,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BiConsumer;
+import java.util.stream.Collectors;
 
 /**
  * The public API for Rapid. Users create Cluster objects using either Cluster.start()
@@ -162,15 +164,18 @@ public final class Cluster {
     public static class Builder {
         private final Endpoint listenAddress;
         @Nullable private IEdgeFailureDetectorFactory edgeFailureDetector = null;
+        private List<Endpoint> broadcastingNodes = new ArrayList<>();
         private Metadata metadata = Metadata.getDefaultInstance();
         private Settings settings = new Settings();
         private final Map<ClusterEvents, List<BiConsumer<Long, List<NodeStatusChange>>>> subscriptions =
                 new EnumMap<>(ClusterEvents.class);
 
+
         // These fields are initialized at the beginning of start() and join()
         @Nullable private IMessagingClient messagingClient = null;
         @Nullable private IMessagingServer messagingServer = null;
         @Nullable private SharedResources sharedResources = null;
+        @Nullable private IBroadcaster broadcaster = null;
 
         /**
          * Instantiates a builder for a Rapid Cluster node that will listen on the given {@code listenAddress}
@@ -248,6 +253,18 @@ public final class Cluster {
         }
 
         /**
+         * Sets an optional node that will broadcast messages to all cluster nodes on their behalf
+         */
+        public Builder setBroadcastingNodes(final List<HostAndPort> broadcastingNodes) {
+            this.broadcastingNodes = broadcastingNodes.stream().map(hostAndPort -> {
+                return Endpoint.newBuilder().setHostname(hostAndPort.getHost())
+                        .setPort(hostAndPort.getPort())
+                        .build();
+            }).collect(Collectors.toList());
+            return this;
+        }
+
+        /**
          * Start a cluster without joining. Required to bootstrap a seed node.
          *
          * @throws IOException Thrown if we cannot successfully start a server
@@ -273,7 +290,8 @@ public final class Cluster {
                                                     : Collections.emptyMap();
             final MembershipService membershipService = new MembershipService(listenAddress,
                     cutDetector, membershipView, sharedResources, settings,
-                                            messagingClient, edgeFailureDetector, metadataMap, subscriptions);
+                                            messagingClient, edgeFailureDetector, metadataMap, subscriptions,
+                    new UnicastToAllBroadcaster(messagingClient));
             messagingServer.setMembershipService(membershipService);
             messagingServer.start();
             return new Cluster(messagingServer, membershipService, sharedResources, listenAddress);
@@ -386,18 +404,24 @@ public final class Cluster {
              * Phase one complete. Now send a phase two message to all our observers, and if there is a valid
              * response, construct a Cluster object based on it.
              */
-            final Optional<JoinResponse> response = sendJoinPhase2Messages(joinPhaseOneResult,
+            final List<JoinResponse> responses = sendJoinPhase2Messages(joinPhaseOneResult,
                     configurationToJoin, currentIdentifier)
                     .stream()
                     .filter(Objects::nonNull)
                     .map(RapidResponse::getJoinResponse)
+                    .collect(Collectors.toList());
+
+            final Optional<JoinResponse> response = responses.stream()
                     .filter(r -> r.getStatusCode() == JoinStatusCode.SAFE_TO_JOIN)
                     .filter(r -> r.getConfigurationId() != configurationToJoin)
                     .findFirst();
             if (response.isPresent()) {
                 return createClusterFromJoinResponse(response.get());
             }
-            throw new JoinPhaseTwoException();
+            final String responseDetail = responses.stream().map(r -> {
+                return "Join status: " + r.getStatusCode().name() + " configuration: " + r.getConfigurationId();
+            }).collect(Collectors.joining(", "));
+            throw new JoinPhaseTwoException(responseDetail);
         }
 
         /**
@@ -460,9 +484,13 @@ public final class Cluster {
             final MultiNodeCutDetector cutDetector = new MultiNodeCutDetector(K, H, L);
             edgeFailureDetector = edgeFailureDetector != null ? edgeFailureDetector
                                                   : new PingPongFailureDetector.Factory(listenAddress, messagingClient);
+            final IBroadcaster broadcaster = this.broadcastingNodes.isEmpty() ?
+                    new UnicastToAllBroadcaster(messagingClient)
+                    : new ForwardingBroadcaster(messagingClient, broadcastingNodes);
             final MembershipService membershipService =
                     new MembershipService(listenAddress, cutDetector, membershipViewFinal,
-                           sharedResources, settings, messagingClient, edgeFailureDetector, allMetadata, subscriptions);
+                           sharedResources, settings, messagingClient, edgeFailureDetector,
+                            allMetadata, subscriptions, broadcaster);
             messagingServer.setMembershipService(membershipService);
             if (LOG.isTraceEnabled()) {
                 LOG.trace("{} has observers {}", listenAddress,
@@ -499,5 +527,9 @@ public final class Cluster {
     }
 
     static final class JoinPhaseTwoException extends RuntimeException {
+
+        public JoinPhaseTwoException(final String message) {
+            super(message);
+        }
     }
 }
