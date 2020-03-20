@@ -196,8 +196,8 @@ public class ClusterTest {
      */
     @Test(timeout = 30000)
     public void fiftyNodesJoinTwentyNodeCluster() throws IOException, InterruptedException {
-        final int numNodesPhase1 = 20;
-        final int numNodesPhase2 = 50;
+        final int numNodesPhase1 = 50;
+        final int numNodesPhase2 = 20;
         final Endpoint seedEndpoint = Utils.hostFromParts("127.0.0.1", basePort);
         createCluster(numNodesPhase1, seedEndpoint);
         waitAndVerifyAgreement(numNodesPhase1, 10, 100);

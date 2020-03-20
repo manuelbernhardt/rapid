@@ -1,5 +1,6 @@
 package com.vrg.rapid;
 
+import com.vrg.rapid.messaging.IBroadcaster;
 import com.vrg.rapid.messaging.IMessagingClient;
 import com.vrg.rapid.messaging.impl.GrpcClient;
 import com.vrg.rapid.monitoring.impl.PingPongFailureDetector;
@@ -143,8 +144,10 @@ public class FastPaxosWithoutFallbackTests {
                 new MultiNodeCutDetector(K, H, L);
         final SharedResources resources = new SharedResources(serverAddr);
         final IMessagingClient client = new GrpcClient(serverAddr);
+        final IBroadcaster broadcaster = new UnicastToAllBroadcaster(client);
         final MembershipService service = new MembershipService(serverAddr, cutDetector, view,
-                resources, new Settings(), client, new PingPongFailureDetector.Factory(serverAddr, client));
+                resources, new Settings(), client, new PingPongFailureDetector.Factory(serverAddr, client),
+                broadcaster);
         services.add(service);
         return service;
     }
