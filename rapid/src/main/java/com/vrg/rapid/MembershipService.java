@@ -365,10 +365,18 @@ public final class MembershipService {
 
     private ListenableFuture<RapidResponse> handleBroadcastingMessage(final RapidRequest request) {
         final SettableFuture<RapidResponse> future = SettableFuture.create();
-        final IBroadcaster broadcaster = new UnicastToAllBroadcaster(messagingClient);
-        broadcaster.setMembership(request.getBroadcastingMessage().getRecipientsList());
-        broadcaster.broadcast(request.getBroadcastingMessage().getMessage());
         future.set(null);
+
+        for (final Endpoint recipient : request.getBroadcastingMessage().getRecipientsList()) {
+            // remove ourselves since we don't want to try and send this to ourselves
+            // through the messaging implementation
+            if (!recipient.equals(myAddr)) {
+                messagingClient.sendMessageBestEffort(recipient, request.getBroadcastingMessage().getMessage());
+            }
+        }
+        // we know for a fact that we're part of the recipients or else we couldn't have gotten this message
+        Utils.ignoreFuture(handleMessage(request.getBroadcastingMessage().getMessage()));
+
         return future;
     }
 

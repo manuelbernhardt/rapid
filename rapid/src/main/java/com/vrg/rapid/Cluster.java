@@ -44,6 +44,8 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -164,7 +166,7 @@ public final class Cluster {
     public static class Builder {
         private final Endpoint listenAddress;
         @Nullable private IEdgeFailureDetectorFactory edgeFailureDetector = null;
-        private List<Endpoint> broadcastingNodes = new ArrayList<>();
+        private Set<Endpoint> broadcastingNodes = new HashSet<>();
         private Metadata metadata = Metadata.getDefaultInstance();
         private Settings settings = new Settings();
         private final Map<ClusterEvents, List<BiConsumer<Long, List<NodeStatusChange>>>> subscriptions =
@@ -259,7 +261,7 @@ public final class Cluster {
                 return Endpoint.newBuilder().setHostname(hostAndPort.getHost())
                         .setPort(hostAndPort.getPort())
                         .build();
-            }).collect(Collectors.toList());
+            }).collect(Collectors.toSet());
             return this;
         }
 
@@ -476,7 +478,7 @@ public final class Cluster {
                                                   : new PingPongFailureDetector.Factory(listenAddress, messagingClient);
             final IBroadcaster broadcaster = this.broadcastingNodes.isEmpty() ?
                     new UnicastToAllBroadcaster(messagingClient)
-                    : new ForwardingBroadcaster(messagingClient, broadcastingNodes);
+                    : new ForwardingBroadcaster(messagingClient, broadcastingNodes, listenAddress);
             final MembershipService membershipService =
                     new MembershipService(listenAddress, cutDetector, membershipViewFinal,
                            sharedResources, settings, messagingClient, edgeFailureDetector,
