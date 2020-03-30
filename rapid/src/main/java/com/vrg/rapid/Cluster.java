@@ -257,7 +257,8 @@ public final class Cluster {
          */
         public Builder setBroadcastingNodes(final List<HostAndPort> broadcastingNodes) {
             this.broadcastingNodes = broadcastingNodes.stream().map(hostAndPort -> {
-                return Endpoint.newBuilder().setHostname(hostAndPort.getHost())
+                return Endpoint.newBuilder()
+                        .setHostname(ByteString.copyFromUtf8(hostAndPort.getHost()))
                         .setPort(hostAndPort.getPort())
                         .build();
             }).collect(Collectors.toList());
