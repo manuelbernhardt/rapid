@@ -237,16 +237,27 @@ public final class MembershipService {
                 joinersToRespondTo.computeIfAbsent(joinMessage.getSender(),
                         k -> new LinkedBlockingDeque<>()).add(future);
 
-                final AlertMessage msg = AlertMessage.newBuilder()
-                        .setEdgeSrc(myAddr)
-                        .setEdgeDst(joinMessage.getSender())
-                        .setEdgeStatus(EdgeStatus.UP)
-                        .setConfigurationId(currentConfiguration)
-                        .setNodeId(joinMessage.getNodeId())
-                        .addAllRingNumber(joinMessage.getRingNumberList())
-                        .setMetadata(joinMessage.getMetadata())
-                        .build();
-                enqueueAlertMessage(msg);
+                final List<Endpoint> observers = membershipView.getExpectedObserversOf(joinMessage.getSender());
+
+                final Map<Endpoint, List<Integer>> ringNumbersPerObserver = new HashMap<>();
+                joinMessage.getRingNumberList().forEach(ringNumber -> {
+                    final Endpoint observer = observers.get(ringNumber);
+                    ringNumbersPerObserver.computeIfAbsent(observer, k -> new ArrayList<>()).add(ringNumber);
+                });
+
+                ringNumbersPerObserver.forEach((observer, ringNumbers) -> {
+                    final AlertMessage msg = AlertMessage.newBuilder()
+                            .setEdgeSrc(observer)
+                            .setEdgeDst(joinMessage.getSender())
+                            .setEdgeStatus(EdgeStatus.UP)
+                            .setConfigurationId(currentConfiguration)
+                            .setNodeId(joinMessage.getNodeId())
+                            .addAllRingNumber(ringNumbers)
+                            .setMetadata(joinMessage.getMetadata())
+                            .build();
+                    enqueueAlertMessage(msg);
+                });
+
             } else {
                 // This handles the corner case where the configuration changed between phase 1 and phase 2
                 // of the joining node's bootstrap. It should attempt to rejoin the network.

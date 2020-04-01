@@ -72,6 +72,7 @@ public final class Cluster {
     private static final int K = 10;
     private static final int H = 9;
     private static final int L = 4;
+    private static final int JOIN_OBSERVERS = 2;
     private static final int RETRIES = 5;
     private final MembershipService membershipService;
     private final IMessagingServer rpcServer;
@@ -407,13 +408,18 @@ public final class Cluster {
             assert messagingClient != null;
             // We have the list of observers. Now contact them as part of phase 2.
             final List<Endpoint> observerList = joinPhaseOneResult.getEndpointsList();
+            final List<Endpoint> selectedObservers = observerList.subList(0, JOIN_OBSERVERS);
             final Map<Endpoint, List<Integer>> ringNumbersPerObserver = new HashMap<>(K);
 
             // Batch together requests to the same node.
+            // Split ring numbers amongst the subset of observers to contact as part of the join process.
             int ringNumber = 0;
-            for (final Endpoint observer: observerList) {
-                ringNumbersPerObserver.computeIfAbsent(observer, k -> new ArrayList<>()).add(ringNumber);
-                ringNumber++;
+            final int ringNumbersCount = K / JOIN_OBSERVERS;
+            for (final Endpoint observer: selectedObservers) {
+                for (int i = 0; i < ringNumbersCount; i++) {
+                    ringNumbersPerObserver.computeIfAbsent(observer, k -> new ArrayList<>()).add(ringNumber);
+                    ringNumber++;
+                }
             }
 
             final List<ListenableFuture<RapidResponse>> responseFutures = new ArrayList<>();
