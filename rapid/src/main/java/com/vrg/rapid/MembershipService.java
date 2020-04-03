@@ -108,7 +108,7 @@ public final class MembershipService {
     // Fields used by consensus protocol
     private boolean announcedProposal = false;
     private final Object membershipUpdateLock = new Object();
-    private final ISettings settings;
+    private final Settings settings;
 
 
     MembershipService(final Endpoint myAddr, final MultiNodeCutDetector cutDetection,
@@ -121,7 +121,7 @@ public final class MembershipService {
 
     MembershipService(final Endpoint myAddr, final MultiNodeCutDetector cutDetection,
                       final MembershipView membershipView, final SharedResources sharedResources,
-                      final ISettings settings, final IMessagingClient messagingClient,
+                      final Settings settings, final IMessagingClient messagingClient,
                       final IEdgeFailureDetectorFactory edgeFailureDetector, final Map<Endpoint, Metadata> metadataMap,
                       final Map<ClusterEvents, List<BiConsumer<Long, List<NodeStatusChange>>>> subscriptions) {
         this.myAddr = myAddr;
@@ -153,7 +153,8 @@ public final class MembershipService {
         // Prepare consensus instance
         this.fastPaxosInstance = new FastPaxos(myAddr, membershipView.getCurrentConfigurationId(),
                                                membershipView.getMembershipSize(), this.messagingClient,
-                                               this.broadcaster, this.backgroundTasksExecutor, this::decideViewChange);
+                                               this.broadcaster, this.backgroundTasksExecutor, this::decideViewChange,
+                this.settings);
         createFailureDetectorsForCurrentConfiguration();
 
         // Execute all VIEW_CHANGE callbacks. This informs applications that a start/join has successfully completed.
@@ -371,7 +372,7 @@ public final class MembershipService {
         announcedProposal = false;
         fastPaxosInstance = new FastPaxos(myAddr, currentConfigurationId, membershipView.getMembershipSize(),
                                           messagingClient, broadcaster, backgroundTasksExecutor,
-                                          this::decideViewChange);
+                                          this::decideViewChange, settings);
         broadcaster.setMembership(membershipView.getRing(0));
 
         // Inform EdgeFailureDetector about membership change
