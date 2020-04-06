@@ -184,6 +184,8 @@ public final class MembershipService {
                 return handleConsensusMessages(msg);
             case LEAVEMESSAGE:
                 return handleLeaveMessage(msg);
+            case BROADCASTINGMESSAGE:
+                return handleBroadcastingMessage(msg);
             case CONTENT_NOT_SET:
             default:
                 throw new IllegalArgumentException("Unidentified RapidRequest type " + msg.getContentCase());
@@ -329,6 +331,11 @@ public final class MembershipService {
         edgeFailureNotification(request.getLeaveMessage().getSender(), membershipView.getCurrentConfigurationId());
         future.set(null);
         return future;
+    }
+
+    private ListenableFuture<RapidResponse> handleBroadcastingMessage(final RapidRequest request) {
+        assert broadcaster instanceof ConsistentHashBroadcaster;
+        return ((ConsistentHashBroadcaster)broadcaster).handleBroadcastingMessage(request.getBroadcastingMessage());
     }
 
     /**

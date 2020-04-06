@@ -1,6 +1,7 @@
 package com.vrg.rapid;
 
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.SettableFuture;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.vrg.rapid.messaging.IBroadcaster;
 import com.vrg.rapid.messaging.IMessagingClient;
@@ -38,6 +39,7 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
     private final boolean isBroadcaster;
     private final IMessagingClient messagingClient;
     private final Endpoint myAddress;
+    private Set<Endpoint> allRecipients = new HashSet<>();
     private Set<Endpoint> myRecipients = new HashSet<>();
 
     private ConsistentHash<Endpoint> broadcasterRing =
@@ -67,14 +69,8 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
                 final RapidRequest request = Utils.toRapidRequest(
                         broadcastingMessageBuilder.setShouldDeliver(true).build()
                 );
-                allBroadcasters.stream().filter(node -> !node.equals(myAddress)).forEach(node -> {
-                    final ListenableFuture<RapidResponse> response = messagingClient.sendMessage(node, request);
-                    responses.add(response);
-                });
-                // directly send the message to own recipients
-                myRecipients.forEach(recipient -> {
-                    messagingClient.sendMessage(recipient, rapidRequest);
-                });
+                sendToBroadcasters(request);
+                sendToOwnRecipients(rapidRequest);
             } else {
                 // send it to our broadcaster who will take care of retransmission
                 final RapidRequest request = Utils.toRapidRequest(
@@ -84,12 +80,20 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
                 final ListenableFuture<RapidResponse> response = messagingClient.sendMessage(broadcaster, request);
                 responses.add(response);
             }
+        } else {
+            // fall back to direct broadcasting
+            // this happens e.g. when the seed node joins
+            allRecipients.forEach(node -> {
+                responses.add(messagingClient.sendMessageBestEffort(node, rapidRequest));
+            });
+
         }
         return responses;
     }
 
     @Override
     public void setInitialMembership(final List<Endpoint> recipients, final Map<Endpoint, Metadata> metadataMap) {
+        allRecipients.addAll(recipients);
         if (isBroadcaster) {
             metadataMap.forEach((node, metadata) -> {
                 if (metadata.getMetadataCount() > 0
@@ -108,6 +112,7 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
 
     @Override
     public void onNodeAdded(final Endpoint node, final Optional<Metadata> metadata) {
+        allRecipients.add(node);
         final boolean addedNodeIsBroadcaster = metadata.isPresent() && isBroadcasterNode(metadata.get());
         if (addedNodeIsBroadcaster) {
             broadcasterRing.add(node);
@@ -123,13 +128,47 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
 
     @Override
     public void onNodeRemoved(final Endpoint node) {
+        allRecipients.remove(node);
         broadcasterRing.remove(node);
         allBroadcasters.add(node);
         myRecipients.remove(node);
+    }
+
+    public ListenableFuture<RapidResponse> handleBroadcastingMessage(final BroadcastingMessage msg) {
+        final SettableFuture<RapidResponse> future = SettableFuture.create();
+        if (msg.getShouldDeliver()) {
+            // this message already went through the ring, deliver to our recipients
+            sendToOwnRecipients(msg.getMessage());
+        } else {
+            // pass it on to all other broadcasters, and deliver to our recipients
+            sendToBroadcasters(Utils.toRapidRequest(msg.toBuilder().setShouldDeliver(true).build()));
+            sendToOwnRecipients(msg.getMessage());
+        }
+        future.set(null);
+        return future;
     }
 
     private boolean isBroadcasterNode(final Metadata nodeMetadata) {
         return nodeMetadata.getMetadataCount() > 0
                 && nodeMetadata.getMetadataMap().containsKey(Cluster.BROADCASTER_METADATA_KEY);
     }
+
+    private List<ListenableFuture> sendToOwnRecipients(final RapidRequest msg) {
+        final List<ListenableFuture> responses = new ArrayList<>();
+        myRecipients.forEach(node -> {
+            responses.add(messagingClient.sendMessageBestEffort(node, msg));
+        });
+        return responses;
+    }
+
+    private List<ListenableFuture> sendToBroadcasters(final RapidRequest request) {
+        final List<ListenableFuture> responses = new ArrayList<>();
+        allBroadcasters.stream().filter(node -> !node.equals(myAddress)).forEach(node -> {
+            final ListenableFuture<RapidResponse> response = messagingClient.sendMessage(node, request);
+            responses.add(response);
+        });
+        return responses;
+    }
+
+
 }

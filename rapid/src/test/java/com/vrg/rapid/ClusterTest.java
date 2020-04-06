@@ -63,6 +63,7 @@ public class ClusterTest {
     private final Map<Endpoint, List<ClientInterceptors.Delayer>> clientInterceptors = new ConcurrentHashMap<>();
     private boolean useStaticFd = false;
     private boolean addMetadata = true;
+    private boolean useConsistentHashBroadcasting = false;
     @Nullable private Random random = null;
     private long seed;
     private int basePort;
@@ -102,6 +103,7 @@ public class ClusterTest {
         settings.setFailureDetectorIntervalInMs(1000);
         useStaticFd = false;
         addMetadata = true;
+        useConsistentHashBroadcasting = false;
         staticFds.clear();
         serverInterceptors.clear();
         clientInterceptors.clear();
@@ -521,6 +523,31 @@ public class ClusterTest {
         waitAndVerifyAgreement(numNodes, 2, 1000);
     }
 
+    @Test(timeout = 30000)
+    // TODO extend test infrastructure to be able to check that clients never talk to more than 2 * K other nodes
+    public void testConsistentHashBroadcasting() throws IOException, InterruptedException {
+        useConsistentHashBroadcasting = true;
+        final int numBroadcasters = 10;
+        final int numNodesPhase1 = 50;
+        final int numNodesPhase2 = 50;
+        final Endpoint seedEndpoint = Utils.hostFromParts("127.0.0.1", basePort);
+        createCluster(1, seedEndpoint);
+        verifyCluster(1);
+        for (int i = 0; i < numBroadcasters; i++) {
+            final Endpoint joiningEndpoint =
+                    Utils.hostFromParts("127.0.0.1", portCounter.incrementAndGet());
+            final Cluster broadcaster = buildCluster(joiningEndpoint)
+                    .withConsistentHashBroadcasting(true)
+                    .join(seedEndpoint);
+            instances.put(joiningEndpoint, broadcaster);
+        }
+        verifyCluster(numBroadcasters + 1);
+        extendCluster(numNodesPhase1, seedEndpoint);
+        verifyCluster(numBroadcasters + numNodesPhase1 + 1);
+        extendCluster(numNodesPhase2, seedEndpoint);
+        verifyCluster(numBroadcasters + numNodesPhase1 + numNodesPhase2 + 1);
+    }
+
     /**
      * Creates a cluster of size {@code numNodes} with a seed {@code seedEndpoint}.
      *
@@ -537,6 +564,7 @@ public class ClusterTest {
         if (numNodes >= 2) {
             extendCluster(numNodes - 1, seedEndpoint);
         }
+
     }
 
     /**
@@ -768,6 +796,9 @@ public class ClusterTest {
                     new TestingGrpcServer(endpoint,
                             Collections.emptyList(),
                             settings.getUseInProcessTransport()));
+        }
+        if (useConsistentHashBroadcasting) {
+            builder = builder.withConsistentHashBroadcasting(false);
         }
         if (addMetadata) {
             final ByteString byteString = ByteString.copyFrom(endpoint.toString(), Charset.defaultCharset());
