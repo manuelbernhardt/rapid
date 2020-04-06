@@ -267,7 +267,7 @@ public class ClusterTest {
         for (int i = 0; i < phaseTwojoiners; i++) {
             extendCluster(1, seedEndpoint);
         }
-        waitAndVerifyAgreement(numNodes + phaseOneJoiners + phaseTwojoiners, 20, 1500);
+        waitAndVerifyAgreement(numNodes + phaseOneJoiners + phaseTwojoiners, 30, 1500);
         verifyNumClusterInstances(numNodes + phaseOneJoiners + phaseTwojoiners);
     }
 
@@ -535,12 +535,12 @@ public class ClusterTest {
         final Endpoint seedEndpoint = Utils.hostFromParts("127.0.0.1", basePort);
         createCluster(1, seedEndpoint);
         verifyCluster(1);
-        List<Endpoint> broadcasters = new ArrayList<>();
+        final  List<Endpoint> broadcasters = new ArrayList<>();
         for (int i = 0; i < numBroadcasters; i++) {
             final Endpoint joiningEndpoint =
                     Utils.hostFromParts("127.0.0.1", portCounter.incrementAndGet());
             final Cluster broadcaster = buildCluster(joiningEndpoint)
-                    .withConsistentHashBroadcasting(true)
+                    .withConsistentHashBroadcasting(true, true)
                     .join(seedEndpoint);
             instances.put(joiningEndpoint, broadcaster);
             broadcasters.add(joiningEndpoint);
@@ -553,8 +553,9 @@ public class ClusterTest {
         countingClients.forEach((node, client) -> {
             if (!broadcasters.contains(node)) {
                 // seed node + observers + subjects + broadcaster
-                int maximumConnections = 1 + 10 + 10 + 1;
-                assertTrue("Node " + node + " has too many connections: " + client.getEndpointCount(), client.getEndpointCount() <= maximumConnections);
+                final int maximumConnections = 1 + 10 + 10 + 1;
+                assertTrue("Node " + node + " has too many connections: " + client.getEndpointCount(),
+                        client.getEndpointCount() <= maximumConnections);
             }
         });
     }
@@ -812,7 +813,7 @@ public class ClusterTest {
         countingClients.put(endpoint, client);
         if (useConsistentHashBroadcasting) {
             builder = builder
-                    .withConsistentHashBroadcasting(false)
+                    .withConsistentHashBroadcasting(true, false)
                     .setMessagingClientAndServer(
                         client,
                         new GrpcServer(endpoint, new SharedResources(endpoint), settings.getUseInProcessTransport())

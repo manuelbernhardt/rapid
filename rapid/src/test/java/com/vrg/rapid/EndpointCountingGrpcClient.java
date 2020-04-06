@@ -18,13 +18,13 @@ public class EndpointCountingGrpcClient extends GrpcClient {
     }
 
     @Override
-    public ListenableFuture<RapidResponse> sendMessage(Endpoint remote, RapidRequest msg) {
+    public ListenableFuture<RapidResponse> sendMessage(final Endpoint remote, final RapidRequest msg) {
         seenEndpoints.add(remote);
         return super.sendMessage(remote, msg);
     }
 
     @Override
-    public ListenableFuture<RapidResponse> sendMessageBestEffort(Endpoint remote, RapidRequest msg) {
+    public ListenableFuture<RapidResponse> sendMessageBestEffort(final Endpoint remote, final RapidRequest msg) {
         seenEndpoints.add(remote);
         return super.sendMessageBestEffort(remote, msg);
     }

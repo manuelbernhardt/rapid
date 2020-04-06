@@ -253,10 +253,12 @@ public final class Cluster {
          * Use a broadcasting topology where broadcaster nodes arranged in a consistent hash ring take care of
          * transmitting messages on behalf of the other nodes.
          *
-         * Broadcaster nodes must be started first if enabled.
+         * Broadcaster nodes should be started first if enabled or else there will be a fallback to
+         * establishing unicast-based broadcasting.
          */
-        public Builder withConsistentHashBroadcasting(final boolean thisNodeIsBroadcaster) {
-            this.useConsistentHashBroadcasting = true;
+        public Builder withConsistentHashBroadcasting(final boolean useConsistentHashBroadcasting,
+                                                      final boolean thisNodeIsBroadcaster) {
+            this.useConsistentHashBroadcasting = useConsistentHashBroadcasting;
             this.isBroadcaster = thisNodeIsBroadcaster;
             return this;
         }
