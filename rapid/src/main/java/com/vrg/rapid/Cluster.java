@@ -68,6 +68,7 @@ public final class Cluster {
     private static final int H = 9;
     private static final int L = 4;
     private static final int RETRIES = 5;
+    private static final String BROADCASTER_METADATA_KEY = "_BROADCASTER_";
     private static final int INITIAL_BACKOFF_MILLIS = 200;
     private final MembershipService membershipService;
     private final IMessagingServer rpcServer;
@@ -157,6 +158,7 @@ public final class Cluster {
 
     public static class Builder {
         private final Endpoint listenAddress;
+        private  boolean isBroadcaster = false;
         @Nullable private IEdgeFailureDetectorFactory edgeFailureDetector = null;
         private Metadata metadata = Metadata.getDefaultInstance();
         private Settings settings = new Settings();
@@ -243,6 +245,11 @@ public final class Cluster {
             return this;
         }
 
+        public Builder setBroadcaster(boolean isBroadcaster) {
+            this.isBroadcaster = isBroadcaster;
+            return this;
+        }
+
         /**
          * Start a cluster without joining. Required to bootstrap a seed node.
          *
@@ -306,6 +313,10 @@ public final class Cluster {
                     ? messagingClient
                     : new GrpcClient(listenAddress, sharedResources, settings);
             messagingServer.start();
+
+            if (isBroadcaster) {
+                metadata = metadata.toBuilder().putMetadata(BROADCASTER_METADATA_KEY, ByteString.EMPTY).build();
+            }
 
             for (int attempt = 0; attempt < RETRIES; attempt++) {
                 try {
