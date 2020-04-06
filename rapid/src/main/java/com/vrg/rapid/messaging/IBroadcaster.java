@@ -15,10 +15,13 @@ package com.vrg.rapid.messaging;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import com.vrg.rapid.pb.Endpoint;
+import com.vrg.rapid.pb.Metadata;
 import com.vrg.rapid.pb.RapidRequest;
 import com.vrg.rapid.pb.RapidResponse;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /**
  * Supports different broadcast implementations (eager flooding, gossip, etc.).
@@ -26,5 +29,9 @@ import java.util.List;
 public interface IBroadcaster {
     List<ListenableFuture<RapidResponse>> broadcast(RapidRequest rapidRequest, long configurationId);
 
-    void setMembership(List<Endpoint> recipients);
+    void setInitialMembership(List<Endpoint> recipients, Map<Endpoint, Metadata> metadataMap);
+
+    void onNodeAdded(Endpoint node, Optional<Metadata> metadata);
+
+    void onNodeRemoved(Endpoint node);
 }

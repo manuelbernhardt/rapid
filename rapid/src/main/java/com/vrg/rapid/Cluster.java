@@ -68,8 +68,9 @@ public final class Cluster {
     private static final int H = 9;
     private static final int L = 4;
     private static final int RETRIES = 5;
-    private static final String BROADCASTER_METADATA_KEY = "_BROADCASTER_";
     private static final int INITIAL_BACKOFF_MILLIS = 200;
+    static final String BROADCASTER_METADATA_KEY = "_BROADCASTER_";
+
     private final MembershipService membershipService;
     private final IMessagingServer rpcServer;
     private final SharedResources sharedResources;

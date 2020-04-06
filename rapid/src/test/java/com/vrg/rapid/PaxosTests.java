@@ -21,6 +21,7 @@ import com.vrg.rapid.messaging.IBroadcaster;
 import com.vrg.rapid.messaging.IMessagingClient;
 import com.vrg.rapid.pb.ConsensusResponse;
 import com.vrg.rapid.pb.Endpoint;
+import com.vrg.rapid.pb.Metadata;
 import com.vrg.rapid.pb.Phase1bMessage;
 import com.vrg.rapid.pb.Rank;
 import com.vrg.rapid.pb.RapidRequest;
@@ -39,6 +40,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -441,7 +443,17 @@ public class PaxosTests {
         }
 
         @Override
-        public void setMembership(final List<Endpoint> recipients) {
+        public void setInitialMembership(final List<Endpoint> recipients, final Map<Endpoint, Metadata> metadataMap) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void onNodeAdded(final Endpoint node, final Optional<Metadata> metadata) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void onNodeRemoved(final Endpoint node) {
             throw new UnsupportedOperationException();
         }
     }
@@ -500,7 +512,15 @@ public class PaxosTests {
         }
 
         @Override
-        public void setMembership(final List<Endpoint> recipients) {
+        public void setInitialMembership(final List<Endpoint> recipients, final Map<Endpoint, Metadata> metadataMap) {
+        }
+
+        @Override
+        public void onNodeAdded(final Endpoint node, final Optional<Metadata> metadata) {
+        }
+
+        @Override
+        public void onNodeRemoved(final Endpoint node) {
         }
     }
 

@@ -281,7 +281,7 @@ public class MessagingTest {
         final Settings settings = new Settings();
         final IMessagingClient client = new GrpcClient(clientAddr, resources, settings);
         final UnicastToAllBroadcaster broadcaster = new UnicastToAllBroadcaster(client);
-        broadcaster.setMembership(endpointList);
+        broadcaster.setInitialMembership(endpointList);
         for (int i = 0; i < 10; i++) {
             final List<ListenableFuture<RapidResponse>> futures =
                     broadcaster.broadcast(Utils.toRapidRequest(FastRoundPhase2bMessage.getDefaultInstance()),

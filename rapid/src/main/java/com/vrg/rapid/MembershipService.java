@@ -47,6 +47,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -145,7 +146,8 @@ public final class MembershipService {
         alertBatcherJob = this.backgroundTasksExecutor.scheduleAtFixedRate(new AlertBatcher(),
                 0, settings.getBatchingWindowInMs(), TimeUnit.MILLISECONDS);
 
-        this.broadcaster.setMembership(membershipView.getRing(0));
+        this.broadcaster.setInitialMembership(membershipView.getRing(0), metadataMap);
+
         // this::edgeFailureNotification is invoked by the failure detector whenever an edge
         // to an observer is marked faulty.
         this.failureDetectorJobs = new ArrayList<>();
@@ -350,6 +352,7 @@ public final class MembershipService {
                     membershipView.ringDelete(node);
                     statusChanges.add(new NodeStatusChange(node, EdgeStatus.DOWN, metadataManager.get(node)));
                     metadataManager.removeNode(node);
+                    broadcaster.onNodeRemoved(node);
                 }
                 else {
                     assert joinerUuid.containsKey(node);
@@ -358,6 +361,11 @@ public final class MembershipService {
                     final Metadata metadata = joinerMetadata.remove(node);
                     if (metadata.getMetadataCount() > 0) {
                         metadataManager.addMetadata(Collections.singletonMap(node, metadata));
+                    }
+                    if (metadata.getMetadataCount() > 0) {
+                        broadcaster.onNodeAdded(node, Optional.of(metadata));
+                    } else {
+                        broadcaster.onNodeAdded(node, Optional.empty());
                     }
                     statusChanges.add(new NodeStatusChange(node, EdgeStatus.UP, metadata));
                 }
@@ -374,7 +382,6 @@ public final class MembershipService {
         fastPaxosInstance = new FastPaxos(myAddr, currentConfigurationId, membershipView.getMembershipSize(),
                                           messagingClient, broadcaster, backgroundTasksExecutor,
                                           this::decideViewChange, settings);
-        broadcaster.setMembership(membershipView.getRing(0));
 
         // Inform EdgeFailureDetector about membership change
         if (membershipView.isHostPresent(myAddr)) {

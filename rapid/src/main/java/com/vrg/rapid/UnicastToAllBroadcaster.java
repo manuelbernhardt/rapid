@@ -13,11 +13,12 @@
 
 package com.vrg.rapid;
 
-import com.vrg.rapid.pb.Endpoint;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.vrg.rapid.messaging.IBroadcaster;
 import com.vrg.rapid.messaging.IMessagingClient;
+import com.vrg.rapid.pb.Endpoint;
+import com.vrg.rapid.pb.Metadata;
 import com.vrg.rapid.pb.RapidRequest;
 import com.vrg.rapid.pb.RapidResponse;
 import org.slf4j.Logger;
@@ -26,6 +27,8 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
 
@@ -53,7 +56,8 @@ final class UnicastToAllBroadcaster implements IBroadcaster {
     }
 
     @Override
-    public synchronized void setMembership(final List<Endpoint> recipients) {
+    public synchronized void setInitialMembership(final List<Endpoint> recipients,
+                                                  final Map<Endpoint, Metadata> metadataMap) {
         if (LOG.isTraceEnabled()) {
             LOG.trace("setMembership {}", Utils.loggable(recipients));
         }
@@ -61,5 +65,16 @@ final class UnicastToAllBroadcaster implements IBroadcaster {
         final List<Endpoint> arr = new ArrayList<>(recipients);
         Collections.shuffle(arr, ThreadLocalRandom.current());
         this.recipients = arr;
+
+    }
+
+    @Override
+    public synchronized void onNodeAdded(final Endpoint node, final Optional<Metadata> metadata) {
+        recipients.add(node);
+    }
+
+    @Override
+    public synchronized void onNodeRemoved(final Endpoint node) {
+        recipients.remove(node);
     }
 }
