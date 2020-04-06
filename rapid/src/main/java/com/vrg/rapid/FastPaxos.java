@@ -101,7 +101,7 @@ class FastPaxos {
                 .setSender(myAddr)
                 .build();
         final RapidRequest proposalMessage = Utils.toRapidRequest(consensusMessage);
-        broadcaster.broadcast(proposalMessage);
+        broadcaster.broadcast(proposalMessage, configurationId);
         LOG.trace("Scheduling classic round with delay: {}", recoveryDelayInMs);
         scheduledClassicRoundTask = scheduledExecutorService.schedule(this::startClassicPaxosRound, recoveryDelayInMs,
                 TimeUnit.MILLISECONDS);

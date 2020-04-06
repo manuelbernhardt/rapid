@@ -432,7 +432,8 @@ public class PaxosTests {
         }
 
         @Override
-        public List<ListenableFuture<RapidResponse>> broadcast(final RapidRequest rapidRequest) {
+        public List<ListenableFuture<RapidResponse>> broadcast(final RapidRequest rapidRequest,
+                                                               final long configurationId) {
             if (!messageTypeToDrop.contains(rapidRequest.getContentCase())) {
                 paxosInstances.forEach((k, v) -> messagingClient.sendMessage(k, rapidRequest));
             }
@@ -493,7 +494,8 @@ public class PaxosTests {
 
     private static class NoOpBroadcaster implements IBroadcaster {
         @Override
-        public List<ListenableFuture<RapidResponse>> broadcast(final RapidRequest rapidRequest) {
+        public List<ListenableFuture<RapidResponse>> broadcast(final RapidRequest rapidRequest,
+                                                               final long configurationId) {
             return Collections.singletonList(Futures.immediateFuture(null));
         }
 

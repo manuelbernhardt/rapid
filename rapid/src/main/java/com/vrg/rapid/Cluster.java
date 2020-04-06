@@ -245,7 +245,7 @@ public final class Cluster {
             return this;
         }
 
-        public Builder setBroadcaster(boolean isBroadcaster) {
+        public Builder setBroadcaster(final boolean isBroadcaster) {
             this.isBroadcaster = isBroadcaster;
             return this;
         }

@@ -113,7 +113,7 @@ public final class MembershipService {
 
     MembershipService(final Endpoint myAddr, final MultiNodeCutDetector cutDetection,
                       final MembershipView membershipView, final SharedResources sharedResources,
-                      final ISettings settings, final IMessagingClient messagingClient,
+                      final Settings settings, final IMessagingClient messagingClient,
                       final IEdgeFailureDetectorFactory edgeFailureDetector) {
         this(myAddr, cutDetection, membershipView, sharedResources, settings, messagingClient,
              edgeFailureDetector, Collections.emptyMap(), new EnumMap<>(ClusterEvents.class));
@@ -213,7 +213,8 @@ public final class MembershipService {
                         .setStatusCode(JoinStatusCode.SAFE_TO_JOIN)
                         .addAllEndpoints(configuration.endpoints)
                         .addAllIdentifiers(configuration.nodeIds)
-                        .putAllClusterMetadata(metadataManager.getAllMetadata())
+                        .addAllMetadataKeys(metadataManager.getAllMetadata().keySet())
+                        .addAllMetadataValues(metadataManager.getAllMetadata().values())
                         .build();
                 future.set(Utils.toRapidResponse(response));
             } else if (statusCode == JoinStatusCode.SAFE_TO_JOIN) {
@@ -574,7 +575,7 @@ public final class MembershipService {
                             .setSender(myAddr)
                             .addAllMessages(messages)
                             .build();
-                    broadcaster.broadcast(Utils.toRapidRequest(batched));
+                    broadcaster.broadcast(Utils.toRapidRequest(batched), membershipView.getCurrentConfigurationId());
                 }
             }
             finally {

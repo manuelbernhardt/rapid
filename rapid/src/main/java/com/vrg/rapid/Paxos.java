@@ -106,7 +106,7 @@ class Paxos {
                                        .setRank(crnd).build();
         final RapidRequest request = Utils.toRapidRequest(prepare);
         LOG.trace("Broadcasting startPhase1a message: {}", Utils.loggable(request));
-        broadcaster.broadcast(request);
+        broadcaster.broadcast(request, configurationId);
     }
 
     /**
@@ -180,7 +180,7 @@ class Paxos {
                                                    .addAllVval(chosenProposal)
                                                    .build();
                 final RapidRequest request = Utils.toRapidRequest(phase2aMessage);
-                broadcaster.broadcast(request);
+                broadcaster.broadcast(request, configurationId);
             }
         }
     }
@@ -209,7 +209,7 @@ class Paxos {
                                                           .addAllEndpoints(vval)
                                                           .build();
             final RapidRequest request = Utils.toRapidRequest(response);
-            broadcaster.broadcast(request);
+            broadcaster.broadcast(request, configurationId);
         }
     }
 

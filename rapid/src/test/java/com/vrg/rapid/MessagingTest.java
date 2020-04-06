@@ -284,7 +284,8 @@ public class MessagingTest {
         broadcaster.setMembership(endpointList);
         for (int i = 0; i < 10; i++) {
             final List<ListenableFuture<RapidResponse>> futures =
-                    broadcaster.broadcast(Utils.toRapidRequest(FastRoundPhase2bMessage.getDefaultInstance()));
+                    broadcaster.broadcast(Utils.toRapidRequest(FastRoundPhase2bMessage.getDefaultInstance()),
+                            1L);
             for (final ListenableFuture<RapidResponse> future : futures) {
                 assertNotNull(future);
                 final RapidResponse response = future.get();
