@@ -16,6 +16,7 @@ package com.vrg.rapid;
 import com.google.common.net.HostAndPort;
 import com.google.protobuf.ByteString;
 import com.vrg.rapid.messaging.impl.GrpcClient;
+import com.vrg.rapid.messaging.impl.GrpcServer;
 import com.vrg.rapid.pb.Endpoint;
 import com.vrg.rapid.pb.RapidRequest;
 import org.junit.After;
@@ -61,6 +62,7 @@ public class ClusterTest {
     private final Map<Endpoint, StaticFailureDetector.Factory> staticFds = new ConcurrentHashMap<>();
     private final Map<Endpoint, List<ServerDropInterceptors.FirstN>> serverInterceptors = new ConcurrentHashMap<>();
     private final Map<Endpoint, List<ClientInterceptors.Delayer>> clientInterceptors = new ConcurrentHashMap<>();
+    private final Map<Endpoint, EndpointCountingGrpcClient> countingClients = new ConcurrentHashMap<>();
     private boolean useStaticFd = false;
     private boolean addMetadata = true;
     private boolean useConsistentHashBroadcasting = false;
@@ -533,6 +535,7 @@ public class ClusterTest {
         final Endpoint seedEndpoint = Utils.hostFromParts("127.0.0.1", basePort);
         createCluster(1, seedEndpoint);
         verifyCluster(1);
+        List<Endpoint> broadcasters = new ArrayList<>();
         for (int i = 0; i < numBroadcasters; i++) {
             final Endpoint joiningEndpoint =
                     Utils.hostFromParts("127.0.0.1", portCounter.incrementAndGet());
@@ -540,12 +543,20 @@ public class ClusterTest {
                     .withConsistentHashBroadcasting(true)
                     .join(seedEndpoint);
             instances.put(joiningEndpoint, broadcaster);
+            broadcasters.add(joiningEndpoint);
         }
         verifyCluster(numBroadcasters + 1);
         extendCluster(numNodesPhase1, seedEndpoint);
-        verifyCluster(numBroadcasters + numNodesPhase1 + 1);
+        waitAndVerifyAgreement(numBroadcasters + numNodesPhase1 + 1, 10, 1000);
         extendCluster(numNodesPhase2, seedEndpoint);
-        verifyCluster(numBroadcasters + numNodesPhase1 + numNodesPhase2 + 1);
+        waitAndVerifyAgreement(numBroadcasters + numNodesPhase1 + numNodesPhase2 + 1, 10, 1000);
+        countingClients.forEach((node, client) -> {
+            if (!broadcasters.contains(node)) {
+                // seed node + observers + subjects + broadcaster
+                int maximumConnections = 1 + 10 + 10 + 1;
+                assertTrue("Node " + node + " has too many connections: " + client.getEndpointCount(), client.getEndpointCount() <= maximumConnections);
+            }
+        });
     }
 
     /**
@@ -797,8 +808,15 @@ public class ClusterTest {
                             Collections.emptyList(),
                             settings.getUseInProcessTransport()));
         }
+        final EndpointCountingGrpcClient client = new EndpointCountingGrpcClient(endpoint, settings);
+        countingClients.put(endpoint, client);
         if (useConsistentHashBroadcasting) {
-            builder = builder.withConsistentHashBroadcasting(false);
+            builder = builder
+                    .withConsistentHashBroadcasting(false)
+                    .setMessagingClientAndServer(
+                        client,
+                        new GrpcServer(endpoint, new SharedResources(endpoint), settings.getUseInProcessTransport())
+            );
         }
         if (addMetadata) {
             final ByteString byteString = ByteString.copyFrom(endpoint.toString(), Charset.defaultCharset());

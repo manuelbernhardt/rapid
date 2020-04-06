@@ -94,7 +94,6 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
     @Override
     public void setInitialMembership(final List<Endpoint> recipients, final Map<Endpoint, Metadata> metadataMap) {
         allRecipients.addAll(recipients);
-        if (isBroadcaster) {
             metadataMap.forEach((node, metadata) -> {
                 if (metadata.getMetadataCount() > 0
                         && metadata.getMetadataMap().containsKey(Cluster.BROADCASTER_METADATA_KEY)) {
@@ -103,6 +102,7 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
                 }
             });
 
+        if (isBroadcaster) {
             recipients
                     .stream()
                     .filter(node -> myAddress.equals(broadcasterRing.get(node)))
