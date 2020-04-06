@@ -15,6 +15,7 @@ package com.vrg.rapid;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.UncheckedExecutionException;
+import com.vrg.rapid.messaging.IBroadcaster;
 import com.vrg.rapid.messaging.IMessagingClient;
 import com.vrg.rapid.messaging.IMessagingServer;
 import com.vrg.rapid.messaging.impl.GrpcClient;
@@ -37,6 +38,7 @@ import org.junit.Test;
 import javax.annotation.Nullable;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
@@ -281,7 +283,7 @@ public class MessagingTest {
         final Settings settings = new Settings();
         final IMessagingClient client = new GrpcClient(clientAddr, resources, settings);
         final UnicastToAllBroadcaster broadcaster = new UnicastToAllBroadcaster(client);
-        broadcaster.setInitialMembership(endpointList);
+        broadcaster.setInitialMembership(endpointList, Collections.emptyMap());
         for (int i = 0; i < 10; i++) {
             final List<ListenableFuture<RapidResponse>> futures =
                     broadcaster.broadcast(Utils.toRapidRequest(FastRoundPhase2bMessage.getDefaultInstance()),
@@ -351,8 +353,10 @@ public class MessagingTest {
         final MembershipView membershipView = new MembershipView(K);
         membershipView.ringAdd(serverAddr, Utils.nodeIdFromUUID(UUID.randomUUID()));
         final IMessagingClient client = new GrpcClient(serverAddr);
+        final IBroadcaster broadcaster = new UnicastToAllBroadcaster(client);
         final MembershipService service = new MembershipService(serverAddr, cutDetector,
-            membershipView, resources, new Settings(), client, new PingPongFailureDetector.Factory(serverAddr, client));
+            membershipView, resources, new Settings(), client, broadcaster,
+            new PingPongFailureDetector.Factory(serverAddr, client));
         final IMessagingServer rpcServer = new GrpcServer(serverAddr, resources, false);
         rpcServer.setMembershipService(service);
         rpcServer.start();
@@ -371,9 +375,11 @@ public class MessagingTest {
         final MembershipView membershipView = new MembershipView(K);
         membershipView.ringAdd(serverAddr, Utils.nodeIdFromUUID(UUID.randomUUID()));
         final IMessagingClient client = new GrpcClient(serverAddr);
+        final IBroadcaster broadcaster = new UnicastToAllBroadcaster(client);
         final IMessagingServer rpcServer = new TestingGrpcServer(serverAddr, interceptors, false);
         final MembershipService service = new MembershipService(serverAddr, cutDetector,
-            membershipView, resources, new Settings(), client, new PingPongFailureDetector.Factory(serverAddr, client));
+                membershipView, resources, new Settings(), client, broadcaster,
+                new PingPongFailureDetector.Factory(serverAddr, client));
         rpcServer.setMembershipService(service);
         rpcServer.start();
         rpcServers.add(rpcServer);
@@ -389,8 +395,10 @@ public class MessagingTest {
         final MultiNodeCutDetector cutDetector =
                 new MultiNodeCutDetector(K, H, L);
         final IMessagingClient client = new GrpcClient(serverAddr);
+        final IBroadcaster broadcaster = new UnicastToAllBroadcaster(client);
         final MembershipService service = new MembershipService(serverAddr, cutDetector,
-            membershipView, resources, new Settings(), client, new PingPongFailureDetector.Factory(serverAddr, client));
+            membershipView, resources, new Settings(), client, broadcaster,
+                new PingPongFailureDetector.Factory(serverAddr, client));
         final IMessagingServer rpcServer = new GrpcServer(serverAddr, resources, false);
         rpcServer.setMembershipService(service);
         rpcServer.start();

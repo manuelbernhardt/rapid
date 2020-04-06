@@ -114,15 +114,15 @@ public final class MembershipService {
 
     MembershipService(final Endpoint myAddr, final MultiNodeCutDetector cutDetection,
                       final MembershipView membershipView, final SharedResources sharedResources,
-                      final Settings settings, final IMessagingClient messagingClient,
+                      final Settings settings, final IMessagingClient messagingClient, final IBroadcaster broadcaster,
                       final IEdgeFailureDetectorFactory edgeFailureDetector) {
-        this(myAddr, cutDetection, membershipView, sharedResources, settings, messagingClient,
+        this(myAddr, cutDetection, membershipView, sharedResources, settings, messagingClient, broadcaster,
              edgeFailureDetector, Collections.emptyMap(), new EnumMap<>(ClusterEvents.class));
     }
 
     MembershipService(final Endpoint myAddr, final MultiNodeCutDetector cutDetection,
                       final MembershipView membershipView, final SharedResources sharedResources,
-                      final Settings settings, final IMessagingClient messagingClient,
+                      final Settings settings, final IMessagingClient messagingClient, final IBroadcaster broadcaster,
                       final IEdgeFailureDetectorFactory edgeFailureDetector, final Map<Endpoint, Metadata> metadataMap,
                       final Map<ClusterEvents, List<BiConsumer<Long, List<NodeStatusChange>>>> subscriptions) {
         this.myAddr = myAddr;
@@ -133,7 +133,7 @@ public final class MembershipService {
         this.metadataManager = new MetadataManager();
         this.metadataManager.addMetadata(metadataMap);
         this.messagingClient = messagingClient;
-        this.broadcaster = new UnicastToAllBroadcaster(messagingClient);
+        this.broadcaster = broadcaster;
         this.subscriptions = subscriptions;
         this.fdFactory = edgeFailureDetector;
 
