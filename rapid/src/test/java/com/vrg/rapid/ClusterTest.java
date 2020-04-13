@@ -526,16 +526,17 @@ public class ClusterTest {
     }
 
     @Test(timeout = 30000)
-    // TODO extend test infrastructure to be able to check that clients never talk to more than 2 * K other nodes
     public void testConsistentHashBroadcasting() throws IOException, InterruptedException {
         useConsistentHashBroadcasting = true;
+        settings.setFailureDetectorIntervalInMs(500);
+        useShortJoinTimeouts();
         final int numBroadcasters = 10;
-        final int numNodesPhase1 = 50;
-        final int numNodesPhase2 = 50;
+        final int numPhases = 3;
+        final int numNodesPerPhase = 25;
         final Endpoint seedEndpoint = Utils.hostFromParts("127.0.0.1", basePort);
         createCluster(1, seedEndpoint);
         verifyCluster(1);
-        final  List<Endpoint> broadcasters = new ArrayList<>();
+        final Set<Endpoint> broadcasters = new HashSet<>();
         for (int i = 0; i < numBroadcasters; i++) {
             final Endpoint joiningEndpoint =
                     Utils.hostFromParts("127.0.0.1", portCounter.incrementAndGet());
@@ -546,14 +547,15 @@ public class ClusterTest {
             broadcasters.add(joiningEndpoint);
         }
         verifyCluster(numBroadcasters + 1);
-        extendCluster(numNodesPhase1, seedEndpoint);
-        waitAndVerifyAgreement(numBroadcasters + numNodesPhase1 + 1, 10, 1000);
-        extendCluster(numNodesPhase2, seedEndpoint);
-        waitAndVerifyAgreement(numBroadcasters + numNodesPhase1 + numNodesPhase2 + 1, 10, 1000);
+        for (int i = 0; i < numPhases; i++) {
+            extendCluster(numNodesPerPhase, seedEndpoint);
+            waitAndVerifyAgreement(numBroadcasters + (i + 1) * numNodesPerPhase + 1, 10, 2000);
+        }
         countingClients.forEach((node, client) -> {
-            if (!broadcasters.contains(node)) {
+            if (!broadcasters.contains(node) && !node.equals(seedEndpoint)) {
                 // seed node + observers + subjects + broadcaster
                 final int maximumConnections = 1 + 10 + 10 + 1;
+                assertTrue(client.getEndpointCount() > 0);
                 assertTrue("Node " + node + " has too many connections: " + client.getEndpointCount(),
                         client.getEndpointCount() <= maximumConnections);
             }

@@ -141,12 +141,12 @@ public final class MembershipService {
         Arrays.stream(ClusterEvents.values()).forEach(event ->
                 this.subscriptions.computeIfAbsent(event, k -> new ArrayList<>(0)));
 
+        this.broadcaster.setInitialMembership(membershipView.getRing(0), metadataMap);
+
         // Schedule background jobs
         this.backgroundTasksExecutor = sharedResources.getScheduledTasksExecutor();
         alertBatcherJob = this.backgroundTasksExecutor.scheduleAtFixedRate(new AlertBatcher(),
                 0, settings.getBatchingWindowInMs(), TimeUnit.MILLISECONDS);
-
-        this.broadcaster.setInitialMembership(membershipView.getRing(0), metadataMap);
 
         // this::edgeFailureNotification is invoked by the failure detector whenever an edge
         // to an observer is marked faulty.

@@ -10,6 +10,8 @@ import com.vrg.rapid.pb.Endpoint;
 import com.vrg.rapid.pb.Metadata;
 import com.vrg.rapid.pb.RapidRequest;
 import com.vrg.rapid.pb.RapidResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -94,13 +96,12 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
     @Override
     public void setInitialMembership(final List<Endpoint> recipients, final Map<Endpoint, Metadata> metadataMap) {
         allRecipients.addAll(recipients);
-            metadataMap.forEach((node, metadata) -> {
-                if (metadata.getMetadataCount() > 0
-                        && metadata.getMetadataMap().containsKey(Cluster.BROADCASTER_METADATA_KEY)) {
-                    broadcasterRing.add(node);
-                    allBroadcasters.add(node);
-                }
-            });
+        metadataMap.forEach((node, metadata) -> {
+            if (isBroadcasterNode(metadata)) {
+                broadcasterRing.add(node);
+                allBroadcasters.add(node);
+            }
+        });
 
         if (isBroadcaster) {
             recipients
@@ -114,7 +115,7 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
     public void onNodeAdded(final Endpoint node, final Optional<Metadata> metadata) {
         allRecipients.add(node);
         final boolean addedNodeIsBroadcaster = metadata.isPresent() && isBroadcasterNode(metadata.get());
-        if (addedNodeIsBroadcaster) {
+        if (!allBroadcasters.contains(node) && addedNodeIsBroadcaster) {
             broadcasterRing.add(node);
             allBroadcasters.add(node);
         }
@@ -130,7 +131,7 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
     public void onNodeRemoved(final Endpoint node) {
         allRecipients.remove(node);
         broadcasterRing.remove(node);
-        allBroadcasters.add(node);
+        allBroadcasters.remove(node);
         myRecipients.remove(node);
     }
 
