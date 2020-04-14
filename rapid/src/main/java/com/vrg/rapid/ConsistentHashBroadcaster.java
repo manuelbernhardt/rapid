@@ -10,8 +10,6 @@ import com.vrg.rapid.pb.Endpoint;
 import com.vrg.rapid.pb.Metadata;
 import com.vrg.rapid.pb.RapidRequest;
 import com.vrg.rapid.pb.RapidResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
