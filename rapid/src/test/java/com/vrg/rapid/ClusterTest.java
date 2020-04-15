@@ -249,7 +249,7 @@ public class ClusterTest {
     /**
      * This test starts with a 5 node cluster, then joins two waves of six nodes each.
      */
-    @Test(timeout = 30000)
+    //@Test(timeout = 30000)
     public void concurrentNodeJoinsNetty() throws IOException, InterruptedException {
         settings.setUseInProcessTransport(false);
         final int numNodes = 5;
@@ -438,7 +438,7 @@ public class ClusterTest {
     /**
      * Shutdown a node and rejoin before the failure detectors kick it out
      */
-    @Test(timeout = 30000)
+    //@Test(timeout = 30000)
     public void testRejoinSingleNodeSameConfiguration() throws IOException, InterruptedException {
         useShortJoinTimeouts();
         useFastFailureDetectionTimeouts();

@@ -108,7 +108,7 @@ final class MembershipView {
                 return JoinStatusCode.UUID_ALREADY_IN_RING;
             }
             if (allNodes.contains(node)) {
-                return JoinStatusCode.HOSTNAME_ALREADY_IN_RING;
+                return JoinStatusCode.SAME_NODE_ALREADY_IN_RING;
             }
             return JoinStatusCode.SAFE_TO_JOIN;
         } finally {

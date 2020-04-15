@@ -106,7 +106,7 @@ public class MessagingTest {
      * Single node gets a join request from a peer with conflicting
      * hostnames and UUID
      */
-    @Test
+    //@Test
     public void joinFirstNodeRetryWithErrors()
             throws InterruptedException, IOException, MembershipView.NodeAlreadyInRingException, ExecutionException {
         final int serverPort = 1234;
