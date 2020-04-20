@@ -13,12 +13,14 @@
 
 package com.vrg.rapid;
 
+import com.google.protobuf.ByteString;
 import com.vrg.rapid.messaging.IBroadcaster;
 import com.vrg.rapid.messaging.IMessagingClient;
 import com.vrg.rapid.messaging.impl.GrpcClient;
 import com.vrg.rapid.monitoring.impl.PingPongFailureDetector;
 import com.vrg.rapid.pb.Endpoint;
 import com.vrg.rapid.pb.FastRoundPhase2bMessage;
+import com.vrg.rapid.pb.Proposal;
 import com.vrg.rapid.pb.RapidRequest;
 import junitparams.JUnitParamsRunner;
 import junitparams.Parameters;
@@ -30,6 +32,7 @@ import org.junit.runner.RunWith;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
@@ -71,15 +74,17 @@ public class FastPaxosWithoutFallbackTests {
         final MembershipService service = createAndStartMembershipService(node, view);
         assertEquals(N, service.getMembershipSize());
         final long currentId = view.getCurrentConfigurationId();
-        final FastRoundPhase2bMessage.Builder proposal =
-                getProposal(currentId, Collections.singletonList(proposalNode));
-
         for (int i = 0; i < quorum - 1; i++) {
-            service.handleMessage(asRapidMessage(proposal.setSender(addrForBase(i)).build())).get();
+            final FastRoundPhase2bMessage.Builder proposal =
+                    getProposal(addrForBase(serverPort + i), currentId, view.getRing(0),
+                            Collections.singletonList(proposalNode));
+            service.handleMessage(asRapidMessage(proposal.build())).get();
             assertEquals(N, service.getMembershipSize());
         }
-        service.handleMessage(asRapidMessage(proposal.setSender(addrForBase(quorum - 1)).build()))
-               .get();
+        final FastRoundPhase2bMessage.Builder proposal =
+                getProposal(addrForBase(serverPort + quorum - 1), currentId, view.getRing(0),
+                        Collections.singletonList(proposalNode));
+        service.handleMessage(asRapidMessage(proposal.build())).get();
         assertEquals(N - 1, service.getMembershipSize());
     }
 
@@ -110,20 +115,26 @@ public class FastPaxosWithoutFallbackTests {
         assertEquals(N, service.getMembershipSize());
         final long currentId = view.getCurrentConfigurationId();
 
-        final FastRoundPhase2bMessage.Builder proposal =
-                getProposal(currentId, Collections.singletonList(proposalNode));
-        final FastRoundPhase2bMessage.Builder proposalConflict =
-                getProposal(currentId, Collections.singletonList(proposalNodeConflict));
         for (int i = 0; i < numConflicts; i++) {
-            service.handleMessage(asRapidMessage(proposalConflict.setSender(addrForBase(i)).build())).get();
+            final FastRoundPhase2bMessage.Builder proposalConflict =
+                    getProposal(addrForBase(serverPort + i), currentId, view.getRing(0),
+                            Collections.singletonList(proposalNodeConflict));
+            service.handleMessage(asRapidMessage(proposalConflict.build())).get();
             assertEquals(N, service.getMembershipSize());
         }
         final int nonConflictCount = Math.min(numConflicts + quorum - 1, N - 1);
         for (int i = numConflicts; i < nonConflictCount; i++) {
-            service.handleMessage(asRapidMessage(proposal.setSender(addrForBase(i)).build())).get();
+            final FastRoundPhase2bMessage.Builder proposal =
+                    getProposal(addrForBase(serverPort + i), currentId, view.getRing(0),
+                            Collections.singletonList(proposalNode));
+            service.handleMessage(asRapidMessage(proposal.build())).get();
             assertEquals(N, service.getMembershipSize());
         }
-        service.handleMessage(asRapidMessage(proposal.setSender(addrForBase(nonConflictCount)).build())).get();
+        final FastRoundPhase2bMessage.Builder proposal =
+                getProposal(addrForBase(serverPort + nonConflictCount), currentId, view.getRing(0),
+                        Collections.singletonList(proposalNode));
+
+        service.handleMessage(asRapidMessage(proposal.build())).get();
         assertEquals(changeExpected ? N - 1 : N, service.getMembershipSize());
     }
 
@@ -179,11 +190,18 @@ public class FastPaxosWithoutFallbackTests {
     /**
      * Returns a proposal message without the sender set.
      */
-    private FastRoundPhase2bMessage.Builder getProposal(final long currentConfigurationId,
+    private FastRoundPhase2bMessage.Builder getProposal(final Endpoint node,
+                                                        final long currentConfigurationId,
+                                                        final List<Endpoint> memberList,
                                                         final List<Endpoint> proposal) {
+        final BitSet votes = new BitSet(memberList.size());
+        votes.set(memberList.indexOf(node));
         return FastRoundPhase2bMessage.newBuilder()
                 .setConfigurationId(currentConfigurationId)
-                .addAllEndpoints(proposal);
+                .addProposals(Proposal.newBuilder()
+                        .addAllEndpoints(proposal)
+                        .setVotes(ByteString.copyFrom(votes.toByteArray()))
+                        .build());
     }
 
     private Endpoint addrForBase(final int port) {

@@ -531,7 +531,7 @@ public class ClusterTest {
         settings.setFailureDetectorIntervalInMs(500);
         useShortJoinTimeouts();
         final int numBroadcasters = 10;
-        final int numPhases = 3;
+        final int numPhases = 2;
         final int numNodesPerPhase = 25;
         final Endpoint seedEndpoint = Utils.hostFromParts("127.0.0.1", basePort);
         createCluster(1, seedEndpoint);

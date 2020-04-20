@@ -293,7 +293,8 @@ public final class Cluster {
             }
 
             final IBroadcaster broadcaster = useConsistentHashBroadcasting
-                    ? new ConsistentHashBroadcaster(messagingClient, listenAddress, Optional.of(metadata))
+                    ? new ConsistentHashBroadcaster(messagingClient, membershipView, listenAddress,
+                    Optional.of(metadata), sharedResources, settings.getConsensusBatchingWindowInMs())
                     : new UnicastToAllBroadcaster(messagingClient);
 
             final MembershipService membershipService = new MembershipService(listenAddress,
@@ -419,7 +420,8 @@ public final class Cluster {
                                                   : new PingPongFailureDetector.Factory(listenAddress, messagingClient);
 
             final IBroadcaster broadcaster = useConsistentHashBroadcasting
-                    ? new ConsistentHashBroadcaster(messagingClient, listenAddress, Optional.of(metadata))
+                    ? new ConsistentHashBroadcaster(messagingClient, membershipViewFinal, listenAddress,
+                    Optional.of(metadata), sharedResources, settings.getConsensusBatchingWindowInMs())
                     : new UnicastToAllBroadcaster(messagingClient);
 
             final MembershipService membershipService =

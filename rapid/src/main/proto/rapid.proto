@@ -111,9 +111,13 @@ message Response
 
 message FastRoundPhase2bMessage
 {
-    Endpoint sender = 1;
-    int64 configurationId = 2;
-    repeated Endpoint endpoints = 3;
+    int64 configurationId = 1;
+    repeated Proposal proposals = 2;
+}
+
+message Proposal {
+    repeated Endpoint endpoints = 1;
+    bytes votes = 2;
 }
 
 

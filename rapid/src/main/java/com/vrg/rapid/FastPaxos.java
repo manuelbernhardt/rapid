@@ -13,18 +13,21 @@
 
 package com.vrg.rapid;
 
+import com.google.protobuf.ByteString;
 import com.google.protobuf.TextFormat;
 import com.vrg.rapid.messaging.IBroadcaster;
 import com.vrg.rapid.messaging.IMessagingClient;
 import com.vrg.rapid.pb.ConsensusResponse;
 import com.vrg.rapid.pb.Endpoint;
 import com.vrg.rapid.pb.FastRoundPhase2bMessage;
+import com.vrg.rapid.pb.Proposal;
 import com.vrg.rapid.pb.RapidRequest;
 import com.vrg.rapid.pb.RapidResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
+import java.util.BitSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -47,7 +50,7 @@ class FastPaxos {
     private final double jitterRate;
     private final Endpoint myAddr;
     private final long configurationId;
-    private final long membershipSize;
+    private final List<Endpoint> memberList;
     private final Consumer<List<Endpoint>> onDecidedWrapped;
     private final IBroadcaster broadcaster;
     private final Map<List<Endpoint>, AtomicInteger> votesPerProposal = new HashMap<>();
@@ -59,13 +62,13 @@ class FastPaxos {
     @Nullable private ScheduledFuture<?> scheduledClassicRoundTask = null;
     private final ISettings settings;
 
-    FastPaxos(final Endpoint myAddr, final long configurationId, final int membershipSize,
+    FastPaxos(final Endpoint myAddr, final long configurationId, final List<Endpoint> memberList,
               final IMessagingClient client, final IBroadcaster broadcaster,
               final ScheduledExecutorService scheduledExecutorService, final Consumer<List<Endpoint>> onDecide,
               final ISettings settings) {
         this.myAddr = myAddr;
         this.configurationId = configurationId;
-        this.membershipSize = membershipSize;
+        this.memberList = memberList;
         this.broadcaster = broadcaster;
         this.settings = settings;
 
@@ -73,7 +76,7 @@ class FastPaxos {
         // rounds. This determines how many classic rounds we want to start per second on average. Does not
         // affect correctness of the protocol, but having too many nodes starting rounds will increase messaging load,
         // especially for very large clusters.
-        this.jitterRate = 1 / (double) membershipSize;
+        this.jitterRate = 1 / (double) this.memberList.size();
         this.scheduledExecutorService = scheduledExecutorService;
         this.onDecidedWrapped = hosts -> {
             assert !decided.get();
@@ -83,7 +86,7 @@ class FastPaxos {
             }
             onDecide.accept(hosts);
         };
-        this.paxos = new Paxos(myAddr, configurationId, membershipSize, client, broadcaster, onDecidedWrapped);
+        this.paxos = new Paxos(myAddr, configurationId, this.memberList.size(), client, broadcaster, onDecidedWrapped);
     }
 
     /**
@@ -95,10 +98,16 @@ class FastPaxos {
         synchronized (paxosLock) {
             paxos.registerFastRoundVote(proposal);
         }
+        final int myIndex = memberList.indexOf(myAddr);
+        final BitSet votes = new BitSet(memberList.size());
+        votes.set(myIndex);
+        final Proposal proposalAndVotes = Proposal.newBuilder()
+                .addAllEndpoints(proposal)
+                .setVotes(ByteString.copyFrom(votes.toByteArray()))
+                .build();
         final FastRoundPhase2bMessage consensusMessage = FastRoundPhase2bMessage.newBuilder()
                 .setConfigurationId(configurationId)
-                .addAllEndpoints(proposal)
-                .setSender(myAddr)
+                .addProposals(proposalAndVotes)
                 .build();
         final RapidRequest proposalMessage = Utils.toRapidRequest(consensusMessage);
         broadcaster.broadcast(proposalMessage, configurationId);
@@ -131,28 +140,45 @@ class FastPaxos {
             return;
         }
 
-        if (votesReceived.contains(proposalMessage.getSender())) {
-            return;
-        }
-
         if (decided.get()) {
             return;
         }
-        votesReceived.add(proposalMessage.getSender());
-        final AtomicInteger proposalsReceived = votesPerProposal.computeIfAbsent(proposalMessage.getEndpointsList(),
-                k -> new AtomicInteger(0));
-        final int count = proposalsReceived.incrementAndGet();
-        final int F = (int) Math.floor((membershipSize - 1) / 4.0); // Fast Paxos resiliency.
-        if (votesReceived.size() >= membershipSize - F) {
-            if (count >= membershipSize - F) {
-                LOG.trace("Decided on a view change: {}", proposalMessage.getEndpointsList());
-                // We have a successful proposal. Consume it.
-                onDecidedWrapped.accept(proposalMessage.getEndpointsList());
-            } else {
-                // fallback protocol here
-                LOG.trace("Fast round may not succeed for proposal: {}", proposalMessage.getEndpointsList());
+
+        for (final Proposal proposal : proposalMessage.getProposalsList()) {
+            LOG.trace("Received proposal for {} nodes", proposal.getEndpointsCount());
+            // decompress all the votes contained in the proposal
+            // the index in the bitset corresponds to the index of an endpoint in ring 0
+            final AtomicInteger proposalsReceived = votesPerProposal.computeIfAbsent(
+                    proposal.getEndpointsList(),
+                    k -> new AtomicInteger(0));
+            final BitSet votes = BitSet.valueOf(proposal.getVotes().toByteArray());
+            for (int i = 0; i < votes.length(); i++) {
+                if (votes.get(i)) {
+                    final Endpoint voter = memberList.get(i);
+                    if (!votesReceived.contains(voter)) {
+                        votesReceived.add(voter);
+                        proposalsReceived.incrementAndGet();
+                    }
+                }
+            }
+
+            // now check if we have reached agreement
+            final int count = votesPerProposal.get(proposal.getEndpointsList()).get();
+            LOG.trace("Currently {} votes for the proposal with {} nodes, {} votes in total",
+                    count, proposal.getEndpointsCount(), votesReceived.size());
+            final int F = (int) Math.floor((memberList.size() - 1) / 4.0); // Fast Paxos resiliency.
+            if (votesReceived.size() >= memberList.size() - F) {
+                if (count >= memberList.size() - F) {
+                    LOG.trace("Decided on a view change: {}", proposal.getEndpointsList());
+                    // We have a successful proposal. Consume it.
+                    onDecidedWrapped.accept(proposal.getEndpointsList());
+                } else {
+                    // fallback protocol here
+                    LOG.trace("Fast round may not succeed for proposal: {}", proposal.getEndpointsList());
+                }
             }
         }
+
     }
 
     /**

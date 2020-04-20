@@ -73,6 +73,7 @@ import java.util.stream.Stream;
 public final class MembershipService {
     private static final Logger LOG = LoggerFactory.getLogger(MembershipService.class);
     static final int BATCHING_WINDOW_IN_MS = 100;
+    static final int CONSENSUS_BATCHING_WINDOW_IN_MS = 500;
     private static final int DEFAULT_FAILURE_DETECTOR_INITIAL_DELAY_IN_MS = 0;
     static final int DEFAULT_FAILURE_DETECTOR_INTERVAL_IN_MS = 1000;
     private static final int LEAVE_MESSAGE_TIMEOUT = 1500;
@@ -155,7 +156,7 @@ public final class MembershipService {
 
         // Prepare consensus instance
         this.fastPaxosInstance = new FastPaxos(myAddr, membershipView.getCurrentConfigurationId(),
-                                               membershipView.getMembershipSize(), this.messagingClient,
+                                               membershipView.getRing(0), this.messagingClient,
                                                this.broadcaster, this.backgroundTasksExecutor, this::decideViewChange,
                 this.settings);
         createFailureDetectorsForCurrentConfiguration();
@@ -394,7 +395,7 @@ public final class MembershipService {
         // Clear data structures for the next round.
         cutDetection.clear();
         announcedProposal = false;
-        fastPaxosInstance = new FastPaxos(myAddr, currentConfigurationId, membershipView.getMembershipSize(),
+        fastPaxosInstance = new FastPaxos(myAddr, currentConfigurationId, membershipView.getRing(0),
                                           messagingClient, broadcaster, backgroundTasksExecutor,
                                           this::decideViewChange, settings);
 
@@ -584,26 +585,28 @@ public final class MembershipService {
 
         @Override
         public void run() {
+            final ArrayList<AlertMessage> messages = new ArrayList<>(sendQueue.size());
             batchSchedulerLock.lock();
             try {
                 // Wait one BATCHING_WINDOW_IN_MS since last add before sending out
                 if (!sendQueue.isEmpty() && lastEnqueueTimestamp > 0
                         && (System.currentTimeMillis() - lastEnqueueTimestamp) > settings.getBatchingWindowInMs()) {
                     LOG.trace("Scheduler is sending out {} messages", sendQueue.size());
-                    final ArrayList<AlertMessage> messages = new ArrayList<>(sendQueue.size());
                     final int numDrained = sendQueue.drainTo(messages);
                     assert numDrained > 0;
-                    final BatchedAlertMessage batched = BatchedAlertMessage.newBuilder()
+                }
+            } finally {
+                batchSchedulerLock.unlock();
+            }
+            if (!messages.isEmpty()) {
+                final BatchedAlertMessage batched = BatchedAlertMessage.newBuilder()
                             .setSender(myAddr)
                             .addAllMessages(messages)
                             .build();
-                    broadcaster.broadcast(Utils.toRapidRequest(batched), membershipView.getCurrentConfigurationId());
-                }
-            }
-            finally {
-                batchSchedulerLock.unlock();
+                broadcaster.broadcast(Utils.toRapidRequest(batched), membershipView.getCurrentConfigurationId());
             }
         }
+
     }
 
     /**
