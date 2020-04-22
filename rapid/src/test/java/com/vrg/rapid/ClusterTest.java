@@ -546,7 +546,7 @@ public class ClusterTest {
             instances.put(joiningEndpoint, broadcaster);
             broadcasters.add(joiningEndpoint);
         }
-        verifyCluster(numBroadcasters + 1);
+        waitAndVerifyAgreement(numBroadcasters + 1, 10, 2000);
         for (int i = 0; i < numPhases; i++) {
             extendCluster(numNodesPerPhase, seedEndpoint);
             waitAndVerifyAgreement(numBroadcasters + (i + 1) * numNodesPerPhase + 1, 10, 2000);
