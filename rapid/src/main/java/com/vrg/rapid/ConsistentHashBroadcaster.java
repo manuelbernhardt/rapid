@@ -71,10 +71,14 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
     private Set<Endpoint> allBroadcasters = new HashSet<>();
 
     // batching of votes
-    private long lastEnqueueTimestamp = -1;    // Timestamp
-    @GuardedBy("fastPaxosBatchSchedulerLock")
-    private final LinkedBlockingQueue<FastRoundPhase2bMessage> fastPaxosSendQueue = new LinkedBlockingQueue<>();
-    private final Lock fastPaxosBatchSchedulerLock = new ReentrantLock();
+    private long lastRecipientEnqueueTimestamp = -1;    // Timestamp
+    private long lastBroadcasterEnqueueTimestamp = -1;    // Timestamp
+    @GuardedBy("broadcastersBatchQueueLock")
+    private final LinkedBlockingQueue<FastRoundPhase2bMessage> broadcastersSendQueue = new LinkedBlockingQueue<>();
+    @GuardedBy("recipientsBatchQueueLock")
+    private final LinkedBlockingQueue<FastRoundPhase2bMessage> recipientsSendQueue = new LinkedBlockingQueue<>();
+    private final Lock broadcastersBatchQueueLock = new ReentrantLock();
+    private final Lock recipientsBatchQueueLock = new ReentrantLock();
     private final ScheduledExecutorService backgroundTasksExecutor;
     private ScheduledFuture<?> consensusBatchingJob;
     private final int consensusBatchingWindowInMs;
@@ -216,7 +220,7 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
 
     private void sendToOwnRecipients(final RapidRequest msg, final boolean shouldBatch) {
         if (shouldBatch && msg.getContentCase() == RapidRequest.ContentCase.FASTROUNDPHASE2BMESSAGE) {
-            enqueueConsensusMessage(msg.getFastRoundPhase2BMessage());
+            enqueueRecipientMessage(msg.getFastRoundPhase2BMessage());
         } else {
             try {
                 rwLock.readLock().lock();
@@ -241,10 +245,12 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
     private ListenableFuture<?> sendToBroadcastersAndRecipients(final BroadcastingMessage broadcastingMessage) {
         // first send to the broadcasters and only then to the recipients
         final ListenableFuture<List<RapidResponse>> broadcasterResponses =
-                Futures.successfulAsList(sendToBroadcasters(Utils.toRapidRequest(broadcastingMessage)));
+                Futures.successfulAsList(sendToBroadcasters(broadcastingMessage, true));
 
         return Futures.transform(broadcasterResponses, rapidResponses -> {
-            if (rapidResponses.size() != allBroadcasters.size() - 1) {
+            if (!broadcastingMessage.getMessage().getContentCase()
+			.equals(RapidRequest.ContentCase.FASTROUNDPHASE2BMESSAGE)
+                    && rapidResponses.size() != allBroadcasters.size() - 1) {
                 LOG.warn("Could not deliver request of type {} to all broadcasters!",
                         broadcastingMessage.getMessage().getContentCase().name());
             }
@@ -253,76 +259,126 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
         });
     }
 
-    private List<ListenableFuture<RapidResponse>> sendToBroadcasters(final RapidRequest request) {
+    private List<ListenableFuture<RapidResponse>> sendToBroadcasters(final BroadcastingMessage message,
+                                                                     final boolean shouldBatch) {
         final List<ListenableFuture<RapidResponse>> responses = new ArrayList<>();
-        rwLock.readLock().lock();
-        try {
-            allBroadcasters.stream().filter(node -> !node.equals(myAddress)).forEach(node -> {
-                final ListenableFuture<RapidResponse> response = messagingClient.sendMessage(node, request);
-                responses.add(response);
-            });
-        } finally {
-            rwLock.readLock().unlock();
+        if (shouldBatch &&
+                message.getMessage().getContentCase().equals(RapidRequest.ContentCase.FASTROUNDPHASE2BMESSAGE)) {
+            enqueueBroadcasterMessage(message.getMessage().getFastRoundPhase2BMessage());
+        } else {
+            rwLock.readLock().lock();
+            try {
+                allBroadcasters.stream().filter(node -> !node.equals(myAddress)).forEach(node -> {
+                    final ListenableFuture<RapidResponse> response =
+                            messagingClient.sendMessage(node, Utils.toRapidRequest(message));
+                    Futures.addCallback(response,
+                            new ErrorReportingCallback(message.getMessage().getContentCase(), node));
+                    responses.add(response);
+                });
+            } finally {
+                rwLock.readLock().unlock();
+            }
         }
         return responses;
     }
 
-    private void enqueueConsensusMessage(final FastRoundPhase2bMessage msg) {
-        fastPaxosBatchSchedulerLock.lock();
+    private void enqueueRecipientMessage(final FastRoundPhase2bMessage msg) {
+        recipientsBatchQueueLock.lock();
         try {
-            lastEnqueueTimestamp = System.currentTimeMillis();
-            fastPaxosSendQueue.add(msg);
+            lastRecipientEnqueueTimestamp = System.currentTimeMillis();
+            recipientsSendQueue.add(msg);
         }
         finally {
-            fastPaxosBatchSchedulerLock.unlock();
+            recipientsBatchQueueLock.unlock();
         }
     }
+
+    private void enqueueBroadcasterMessage(final FastRoundPhase2bMessage msg) {
+        broadcastersBatchQueueLock.lock();
+        try {
+            lastBroadcasterEnqueueTimestamp = System.currentTimeMillis();
+            broadcastersSendQueue.add(msg);
+        }
+        finally {
+            broadcastersBatchQueueLock.unlock();
+        }
+    }
+
 
     private class FastPaxosBatcher implements Runnable {
 
         @Override
         public void run() {
-            final ArrayList<FastRoundPhase2bMessage> messages = new ArrayList<>(fastPaxosSendQueue.size());
-            fastPaxosBatchSchedulerLock.lock();
+            final ArrayList<FastRoundPhase2bMessage> broadcasterMessages =
+                    new ArrayList<>(broadcastersSendQueue.size());
+            broadcastersBatchQueueLock.lock();
             try {
                 // Wait one CONSENSUS_BATCHING_WINDOW_IN_MS since last add before sending out
-                if (!fastPaxosSendQueue.isEmpty() && lastEnqueueTimestamp > 0
-                        && (System.currentTimeMillis() - lastEnqueueTimestamp) > consensusBatchingWindowInMs) {
-                    final int numDrained = fastPaxosSendQueue.drainTo(messages);
+                if (!broadcastersSendQueue.isEmpty() && lastBroadcasterEnqueueTimestamp > 0
+                        && (System.currentTimeMillis() - lastBroadcasterEnqueueTimestamp) >
+                        consensusBatchingWindowInMs) {
+                    final int numDrained = broadcastersSendQueue.drainTo(broadcasterMessages);
                     assert numDrained > 0;
                 }
             } finally {
-                fastPaxosBatchSchedulerLock.unlock();
+                broadcastersBatchQueueLock.unlock();
             }
-            if (!messages.isEmpty()) {
-                // compress all the messages into one
-                final Map<List<Endpoint>, BitSet> allProposals = new HashMap<>();
-                for (final FastRoundPhase2bMessage consensusMessage : messages) {
-                    for (final Proposal proposal : consensusMessage.getProposalsList()) {
-                        final BitSet allVotes = allProposals.computeIfAbsent(proposal.getEndpointsList(),
-                        endpoints -> BitSet.valueOf(proposal.getVotes().toByteArray()));
-                        allVotes.or(BitSet.valueOf(proposal.getVotes().toByteArray()));
-                        allProposals.put(proposal.getEndpointsList(), allVotes);
-                    }
-                }
-                final List<Proposal> allProposalMessages = new ArrayList<>();
-                allProposals.entrySet().forEach(entry -> {
-                    final Proposal proposal = Proposal.newBuilder()
-                            .addAllEndpoints(entry.getKey())
-                            .setVotes(ByteString.copyFrom(entry.getValue().toByteArray()))
-                            .build();
-                    allProposalMessages.add(proposal);
-                });
-                final FastRoundPhase2bMessage batched = FastRoundPhase2bMessage.newBuilder()
+            if (!broadcasterMessages.isEmpty()) {
+                final FastRoundPhase2bMessage batched = compressConsensusMessages(broadcasterMessages);
+                final BroadcastingMessage message = BroadcastingMessage.newBuilder()
+                        .setMessage(Utils.toRapidRequest(batched))
+                        .setShouldDeliver(true)
                         .setConfigurationId(membershipView.getCurrentConfigurationId())
-                        .addAllProposals(allProposalMessages)
                         .build();
-                if (LOG.isTraceEnabled()) {
-                    LOG.trace("Sending batched consensus messages from {} endpoints", messages.size());
+                sendToBroadcasters(message, false);
+            }
+
+            final ArrayList<FastRoundPhase2bMessage> recipientMessages = new ArrayList<>(recipientsSendQueue.size());
+            recipientsBatchQueueLock.lock();
+            try {
+                // Wait one CONSENSUS_BATCHING_WINDOW_IN_MS since last add before sending out
+                if (!recipientsSendQueue.isEmpty() && lastRecipientEnqueueTimestamp > 0
+                        && (System.currentTimeMillis() - lastRecipientEnqueueTimestamp) > consensusBatchingWindowInMs) {
+                    final int numDrained = recipientsSendQueue.drainTo(recipientMessages);
+                    assert numDrained > 0;
                 }
+            } finally {
+                recipientsBatchQueueLock.unlock();
+            }
+
+            if (!recipientMessages.isEmpty()) {
+                final FastRoundPhase2bMessage batched = compressConsensusMessages(recipientMessages);
                 sendToOwnRecipients(Utils.toRapidRequest(batched), false);
             }
         }
+
+        private FastRoundPhase2bMessage compressConsensusMessages(final List<FastRoundPhase2bMessage> messages) {
+            // compress all the messages into one
+            final Map<List<Endpoint>, BitSet> allProposals = new HashMap<>();
+            for (final FastRoundPhase2bMessage consensusMessage : messages) {
+                for (final Proposal proposal : consensusMessage.getProposalsList()) {
+                    final BitSet allVotes = allProposals.computeIfAbsent(proposal.getEndpointsList(),
+                            endpoints -> BitSet.valueOf(proposal.getVotes().toByteArray()));
+                    allVotes.or(BitSet.valueOf(proposal.getVotes().toByteArray()));
+                    allProposals.put(proposal.getEndpointsList(), allVotes);
+                }
+            }
+            final List<Proposal> allProposalMessages = new ArrayList<>();
+            allProposals.entrySet().forEach(entry -> {
+                final Proposal proposal = Proposal.newBuilder()
+                        .addAllEndpoints(entry.getKey())
+                        .setVotes(ByteString.copyFrom(entry.getValue().toByteArray()))
+                        .build();
+                allProposalMessages.add(proposal);
+            });
+            final FastRoundPhase2bMessage batched = FastRoundPhase2bMessage.newBuilder()
+                    .setConfigurationId(membershipView.getCurrentConfigurationId())
+                    .addAllProposals(allProposalMessages)
+                    .build();
+            return batched;
+        }
+
+
     }
 
     private static class ErrorReportingCallback implements FutureCallback<RapidResponse> {

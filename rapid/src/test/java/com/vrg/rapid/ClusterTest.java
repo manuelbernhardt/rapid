@@ -814,8 +814,10 @@ public class ClusterTest {
         final EndpointCountingGrpcClient client = new EndpointCountingGrpcClient(endpoint, settings);
         countingClients.put(endpoint, client);
         if (useConsistentHashBroadcasting) {
+            settings.setConsensusFallbackTimeoutBaseDelayInMs(Long.MAX_VALUE); // make sure we can never fall back
             builder = builder
                     .withConsistentHashBroadcasting(true, false)
+                    .useSettings(settings)
                     .setMessagingClientAndServer(
                         client,
                         new GrpcServer(endpoint, new SharedResources(endpoint), settings.getUseInProcessTransport())
