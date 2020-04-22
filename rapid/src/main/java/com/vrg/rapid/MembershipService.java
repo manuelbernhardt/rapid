@@ -450,8 +450,10 @@ public final class MembershipService {
             }
             if (LOG.isDebugEnabled()) {
                 final int size = membershipView.getMembershipSize();
-                LOG.debug("Announcing EdgeFail event {subject:{}, observer:{}, config:{}, size:{}}",
-                        Utils.loggable(subject), Utils.loggable(myAddr), configurationId, size);
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("Announcing EdgeFail event {subject:{}, observer:{}, config:{}, size:{}}",
+                            Utils.loggable(subject), Utils.loggable(myAddr), configurationId, size);
+                }
             }
             // Note: setUuid is deliberately missing here because it does not affect leaves.
             final AlertMessage msg = AlertMessage.newBuilder()
@@ -591,7 +593,9 @@ public final class MembershipService {
                 // Wait one BATCHING_WINDOW_IN_MS since last add before sending out
                 if (!sendQueue.isEmpty() && lastEnqueueTimestamp > 0
                         && (System.currentTimeMillis() - lastEnqueueTimestamp) > settings.getBatchingWindowInMs()) {
-                    LOG.trace("Scheduler is sending out {} messages", sendQueue.size());
+                    if (LOG.isTraceEnabled()) {
+                        LOG.trace("Scheduler is sending out {} messages", sendQueue.size());
+                    }
                     final int numDrained = sendQueue.drainTo(messages);
                     assert numDrained > 0;
                 }
@@ -619,13 +623,17 @@ public final class MembershipService {
                                                            final int membershipSize,
                                                            final long currentConfigurationId) {
         final Endpoint destination = alertMessage.getEdgeDst();
-        LOG.trace("AlertMessage received {sender:{}, config:{}, size:{}, status:{}}",
-                Utils.loggable(batchedAlertMessage.getSender()), alertMessage.getConfigurationId(),
-                membershipSize, alertMessage.getEdgeStatus());
+        if (LOG.isTraceEnabled()) {
+            LOG.trace("AlertMessage received {sender:{}, config:{}, size:{}, status:{}}",
+                    Utils.loggable(batchedAlertMessage.getSender()), alertMessage.getConfigurationId(),
+                    membershipSize, alertMessage.getEdgeStatus());
+        }
 
         if (currentConfigurationId != alertMessage.getConfigurationId()) {
-            LOG.trace("AlertMessage for configuration {} received during configuration {}",
-                    alertMessage.getConfigurationId(), currentConfigurationId);
+            if (LOG.isTraceEnabled()) {
+                LOG.trace("AlertMessage for configuration {} received during configuration {}",
+                        alertMessage.getConfigurationId(), currentConfigurationId);
+            }
             return false;
         }
 
@@ -633,14 +641,18 @@ public final class MembershipService {
         // membership set once and leave it once.
         if (alertMessage.getEdgeStatus().equals(EdgeStatus.UP)
                 && membershipView.isHostPresent(destination)) {
-            LOG.trace("AlertMessage with status UP received for node {} already in configuration {} ",
-                    Utils.loggable(alertMessage.getEdgeDst()), currentConfigurationId);
+            if (LOG.isTraceEnabled()) {
+                LOG.trace("AlertMessage with status UP received for node {} already in configuration {} ",
+                        Utils.loggable(alertMessage.getEdgeDst()), currentConfigurationId);
+            }
             return false;
         }
         if (alertMessage.getEdgeStatus().equals(EdgeStatus.DOWN)
                 && !membershipView.isHostPresent(destination)) {
-            LOG.trace("AlertMessage with status DOWN received for node {} already in configuration {} ",
-                    Utils.loggable(alertMessage.getEdgeDst()), currentConfigurationId);
+            if (LOG.isTraceEnabled()) {
+                LOG.trace("AlertMessage with status DOWN received for node {} already in configuration {} ",
+                        Utils.loggable(alertMessage.getEdgeDst()), currentConfigurationId);
+            }
             return false;
         }
 

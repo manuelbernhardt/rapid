@@ -14,7 +14,6 @@
 package com.vrg.rapid;
 
 import com.google.protobuf.ByteString;
-import com.google.protobuf.TextFormat;
 import com.vrg.rapid.messaging.IBroadcaster;
 import com.vrg.rapid.messaging.IMessagingClient;
 import com.vrg.rapid.pb.ConsensusResponse;
@@ -133,10 +132,8 @@ class FastPaxos {
      */
     private void handleFastRoundProposal(final FastRoundPhase2bMessage proposalMessage) {
         if (proposalMessage.getConfigurationId() != configurationId) {
-            if (LOG.isTraceEnabled()) {
-                LOG.trace("Settings ID mismatch for proposal: current_config:{} proposal:{}", configurationId,
-                        TextFormat.shortDebugString(proposalMessage));
-            }
+            LOG.warn("Settings ID mismatch for proposal: current_config:{} proposal of size:{}", configurationId,
+                    proposalMessage.getProposalsCount());
             return;
         }
 
@@ -145,7 +142,9 @@ class FastPaxos {
         }
 
         for (final Proposal proposal : proposalMessage.getProposalsList()) {
-            LOG.trace("Received proposal for {} nodes", proposal.getEndpointsCount());
+            if (LOG.isTraceEnabled()) {
+                LOG.trace("Received proposal for {} nodes", proposal.getEndpointsCount());
+            }
             // decompress all the votes contained in the proposal
             // the index in the bitset corresponds to the index of an endpoint in ring 0
             final AtomicInteger proposalsReceived = votesPerProposal.computeIfAbsent(
@@ -169,12 +168,16 @@ class FastPaxos {
             final int F = (int) Math.floor((memberList.size() - 1) / 4.0); // Fast Paxos resiliency.
             if (votesReceived.size() >= memberList.size() - F) {
                 if (count >= memberList.size() - F) {
-                    LOG.trace("Decided on a view change: {}", proposal.getEndpointsList());
+                    if (LOG.isTraceEnabled()) {
+                        LOG.trace("Decided on a view change: {}", proposal.getEndpointsList());
+                    }
                     // We have a successful proposal. Consume it.
                     onDecidedWrapped.accept(proposal.getEndpointsList());
                 } else {
                     // fallback protocol here
-                    LOG.trace("Fast round may not succeed for proposal: {}", proposal.getEndpointsList());
+                    if (LOG.isTraceEnabled()) {
+                        LOG.trace("Fast round may not succeed for proposal: {}", proposal.getEndpointsList());
+                    }
                 }
             }
         }
