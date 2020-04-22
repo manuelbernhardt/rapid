@@ -1,5 +1,7 @@
 package com.vrg.rapid;
 
+import com.google.common.util.concurrent.FutureCallback;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
@@ -16,6 +18,7 @@ import com.vrg.rapid.pb.RapidResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -31,7 +34,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * Broadcaster based on a ring of broadcasting nodes layed out via consistent hashing.
@@ -56,8 +61,10 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
     private final IMessagingClient messagingClient;
     private final MembershipView membershipView;
     private final Endpoint myAddress;
-    private Set<Endpoint> allRecipients = new HashSet<>();
-    private Set<Endpoint> myRecipients = new HashSet<>();
+
+    private final ReadWriteLock rwLock = new ReentrantReadWriteLock();
+    @GuardedBy("rwLock") private Set<Endpoint> allRecipients = new HashSet<>();
+    @GuardedBy("rwLock") private Set<Endpoint> myRecipients = new HashSet<>();
 
     private ConsistentHash<Endpoint> broadcasterRing =
             new ConsistentHash<>(CONSISTENT_HASH_REPLICAS, Collections.emptyList());
@@ -109,11 +116,7 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
 
             if (isBroadcaster) {
                 // directly send the message to other broadcasters for retransmission
-                final RapidRequest request = Utils.toRapidRequest(
-                        broadcastingMessageBuilder.setShouldDeliver(true).build()
-                );
-                sendToBroadcasters(request);
-                sendToOwnRecipients(rapidRequest, true);
+                sendToBroadcastersAndRecipients(broadcastingMessageBuilder.setShouldDeliver(true).build());
             } else {
                 // send it to our broadcaster who will take care of retransmission
                 final RapidRequest request = Utils.toRapidRequest(
@@ -121,6 +124,7 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
                 );
                 final Endpoint broadcaster = broadcasterRing.get(myAddress);
                 final ListenableFuture<RapidResponse> response = messagingClient.sendMessage(broadcaster, request);
+                Futures.addCallback(response, new ErrorReportingCallback(request.getContentCase(), broadcaster));
                 responses.add(response);
             }
         } else {
@@ -136,44 +140,60 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
 
     @Override
     public void setInitialMembership(final List<Endpoint> recipients, final Map<Endpoint, Metadata> metadataMap) {
-        allRecipients.addAll(recipients);
-        metadataMap.forEach((node, metadata) -> {
-            if (isBroadcasterNode(metadata)) {
-                broadcasterRing.add(node);
-                allBroadcasters.add(node);
-            }
-        });
+        rwLock.readLock().lock();
+        try {
+            allRecipients.addAll(recipients);
+            metadataMap.forEach((node, metadata) -> {
+                if (isBroadcasterNode(metadata)) {
+                    broadcasterRing.add(node);
+                    allBroadcasters.add(node);
+                }
+            });
 
-        if (isBroadcaster) {
-            recipients
-                    .stream()
-                    .filter(node -> myAddress.equals(broadcasterRing.get(node)))
-                    .forEach(node -> myRecipients.add(node));
+            if (isBroadcaster) {
+                recipients
+                        .stream()
+                        .filter(node -> myAddress.equals(broadcasterRing.get(node)))
+                        .forEach(node -> myRecipients.add(node));
+                assert myRecipients.contains(myAddress);
+            }
+        } finally {
+            rwLock.readLock().unlock();
         }
     }
 
     @Override
     public void onNodeAdded(final Endpoint node, final Optional<Metadata> metadata) {
-        allRecipients.add(node);
-        final boolean addedNodeIsBroadcaster = metadata.isPresent() && isBroadcasterNode(metadata.get());
-        if (!allBroadcasters.contains(node) && addedNodeIsBroadcaster) {
-            broadcasterRing.add(node);
-            allBroadcasters.add(node);
-        }
-        if (isBroadcaster) {
-            final Endpoint responsibleBroadcaster = broadcasterRing.get(node);
-            if (myAddress.equals(responsibleBroadcaster)) {
-                myRecipients.add(node);
+        rwLock.readLock().lock();
+        try {
+            allRecipients.add(node);
+            final boolean addedNodeIsBroadcaster = metadata.isPresent() && isBroadcasterNode(metadata.get());
+            if (!allBroadcasters.contains(node) && addedNodeIsBroadcaster) {
+                broadcasterRing.add(node);
+                allBroadcasters.add(node);
             }
+            if (isBroadcaster) {
+                final Endpoint responsibleBroadcaster = broadcasterRing.get(node);
+                if (myAddress.equals(responsibleBroadcaster)) {
+                    myRecipients.add(node);
+                }
+            }
+        } finally {
+            rwLock.readLock().unlock();
         }
     }
 
     @Override
     public void onNodeRemoved(final Endpoint node) {
-        allRecipients.remove(node);
-        broadcasterRing.remove(node);
-        allBroadcasters.remove(node);
-        myRecipients.remove(node);
+        rwLock.readLock().lock();
+        try {
+            allRecipients.remove(node);
+            broadcasterRing.remove(node);
+            allBroadcasters.remove(node);
+            myRecipients.remove(node);
+        } finally {
+            rwLock.readLock().unlock();
+        }
     }
 
     public ListenableFuture<RapidResponse> handleBroadcastingMessage(final BroadcastingMessage msg) {
@@ -183,8 +203,7 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
             sendToOwnRecipients(msg.getMessage(), true);
         } else {
             // pass it on to all other broadcasters, and deliver to our recipients
-            sendToBroadcasters(Utils.toRapidRequest(msg.toBuilder().setShouldDeliver(true).build()));
-            sendToOwnRecipients(msg.getMessage(), true);
+            sendToBroadcastersAndRecipients(msg.toBuilder().setShouldDeliver(true).build());
         }
         future.set(null);
         return future;
@@ -195,24 +214,56 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
                 && nodeMetadata.getMetadataMap().containsKey(Cluster.BROADCASTER_METADATA_KEY);
     }
 
-    private List<ListenableFuture> sendToOwnRecipients(final RapidRequest msg, final boolean shouldBatch) {
-        final List<ListenableFuture> responses = new ArrayList<>();
+    private void sendToOwnRecipients(final RapidRequest msg, final boolean shouldBatch) {
         if (shouldBatch && msg.getContentCase() == RapidRequest.ContentCase.FASTROUNDPHASE2BMESSAGE) {
             enqueueConsensusMessage(msg.getFastRoundPhase2BMessage());
         } else {
-            myRecipients.forEach(node -> {
-                responses.add(messagingClient.sendMessageBestEffort(node, msg));
-            });
+            try {
+                rwLock.readLock().lock();
+                // send to myself first
+                Futures.addCallback(messagingClient.sendMessage(myAddress, msg),
+                        new ErrorReportingCallback(msg.getContentCase(), myAddress));
+
+                // then to the rest
+                myRecipients.forEach(node -> {
+                    if (!node.equals(myAddress)) {
+                        Futures.addCallback(messagingClient.sendMessage(node, msg),
+                                new ErrorReportingCallback(msg.getContentCase(), myAddress));
+                    }
+                });
+            } finally {
+                rwLock.readLock().unlock();
+            }
         }
-        return responses;
     }
 
-    private List<ListenableFuture> sendToBroadcasters(final RapidRequest request) {
-        final List<ListenableFuture> responses = new ArrayList<>();
-        allBroadcasters.stream().filter(node -> !node.equals(myAddress)).forEach(node -> {
-            final ListenableFuture<RapidResponse> response = messagingClient.sendMessage(node, request);
-            responses.add(response);
+    @CanIgnoreReturnValue
+    private ListenableFuture<?> sendToBroadcastersAndRecipients(final BroadcastingMessage broadcastingMessage) {
+        // first send to the broadcasters and only then to the recipients
+        final ListenableFuture<List<RapidResponse>> broadcasterResponses =
+                Futures.successfulAsList(sendToBroadcasters(Utils.toRapidRequest(broadcastingMessage)));
+
+        return Futures.transform(broadcasterResponses, rapidResponses -> {
+            if (rapidResponses.size() != allBroadcasters.size() - 1) {
+                LOG.warn("Could not deliver request of type {} to all broadcasters!",
+                        broadcastingMessage.getMessage().getContentCase().name());
+            }
+            sendToOwnRecipients(broadcastingMessage.getMessage(), true);
+            return rapidResponses;
         });
+    }
+
+    private List<ListenableFuture<RapidResponse>> sendToBroadcasters(final RapidRequest request) {
+        final List<ListenableFuture<RapidResponse>> responses = new ArrayList<>();
+        rwLock.readLock().lock();
+        try {
+            allBroadcasters.stream().filter(node -> !node.equals(myAddress)).forEach(node -> {
+                final ListenableFuture<RapidResponse> response = messagingClient.sendMessage(node, request);
+                responses.add(response);
+            });
+        } finally {
+            rwLock.readLock().unlock();
+        }
         return responses;
     }
 
@@ -225,9 +276,7 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
         finally {
             fastPaxosBatchSchedulerLock.unlock();
         }
-
     }
-
 
     private class FastPaxosBatcher implements Runnable {
 
@@ -268,11 +317,34 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
                         .setConfigurationId(membershipView.getCurrentConfigurationId())
                         .addAllProposals(allProposalMessages)
                         .build();
-                LOG.trace("Sending batched consensus messages from {} endpoints", messages.size());
+                if (LOG.isTraceEnabled()) {
+                    LOG.trace("Sending batched consensus messages from {} endpoints", messages.size());
+                }
                 sendToOwnRecipients(Utils.toRapidRequest(batched), false);
             }
         }
     }
 
+    private static class ErrorReportingCallback implements FutureCallback<RapidResponse> {
+        private final RapidRequest.ContentCase requestType;
+        private final Endpoint recipient;
+
+        public ErrorReportingCallback(final RapidRequest.ContentCase requestType, final Endpoint recipient) {
+            this.requestType = requestType;
+            this.recipient = recipient;
+        }
+
+        private static final Logger LOG = LoggerFactory.getLogger(ConsistentHashBroadcaster.class);
+
+        @Override
+        public void onSuccess(@Nullable final RapidResponse rapidResponse) {
+        }
+
+        @Override
+        public void onFailure(final Throwable throwable) {
+            LOG.warn("Failed to broadcast request of type {} to {}:{}",
+                    requestType.name(), recipient.getHostname().toStringUtf8(), recipient.getPort());
+        }
+    }
 
 }
