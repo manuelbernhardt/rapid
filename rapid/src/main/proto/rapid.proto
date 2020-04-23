@@ -203,7 +203,7 @@ enum BroadcastingStatus {
 message ProbeMessage
 {
     Endpoint sender = 1;
-    repeated bytes payload = 3;
+    int64 observerConfigurationId = 2;
 }
 
 message ProbeResponse
