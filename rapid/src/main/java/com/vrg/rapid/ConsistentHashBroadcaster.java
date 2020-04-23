@@ -144,7 +144,7 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
 
     @Override
     public void setInitialMembership(final List<Endpoint> recipients, final Map<Endpoint, Metadata> metadataMap) {
-        rwLock.readLock().lock();
+        rwLock.writeLock().lock();
         try {
             allRecipients.addAll(recipients);
             metadataMap.forEach((node, metadata) -> {
@@ -162,13 +162,13 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
                 assert myRecipients.contains(myAddress);
             }
         } finally {
-            rwLock.readLock().unlock();
+            rwLock.writeLock().unlock();
         }
     }
 
     @Override
     public void onNodeAdded(final Endpoint node, final Optional<Metadata> metadata) {
-        rwLock.readLock().lock();
+        rwLock.writeLock().lock();
         try {
             allRecipients.add(node);
             final boolean addedNodeIsBroadcaster = metadata.isPresent() && isBroadcasterNode(metadata.get());
@@ -183,20 +183,20 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
                 }
             }
         } finally {
-            rwLock.readLock().unlock();
+            rwLock.writeLock().unlock();
         }
     }
 
     @Override
     public void onNodeRemoved(final Endpoint node) {
-        rwLock.readLock().lock();
+        rwLock.writeLock().lock();
         try {
             allRecipients.remove(node);
             broadcasterRing.remove(node);
             allBroadcasters.remove(node);
             myRecipients.remove(node);
         } finally {
-            rwLock.readLock().unlock();
+            rwLock.writeLock().unlock();
         }
     }
 
