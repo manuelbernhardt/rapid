@@ -122,6 +122,16 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
                 // directly send the message to other broadcasters for retransmission
                 sendToBroadcastersAndRecipients(broadcastingMessageBuilder.setShouldDeliver(true).build());
             } else {
+                if (rapidRequest.getContentCase().equals(RapidRequest.ContentCase.BATCHEDALERTMESSAGE)) {
+                    // deliver to ourselves directly
+                    // TODO in fact we should do this for all messages, which means they all need to have a sender
+                    final ListenableFuture<RapidResponse> myResponse =
+                            messagingClient.sendMessage(myAddress, rapidRequest);
+                    responses.add(myResponse);
+                    Futures.addCallback(myResponse,
+                            new ErrorReportingCallback(rapidRequest.getContentCase(), myAddress));
+                }
+
                 // send it to our broadcaster who will take care of retransmission
                 final RapidRequest request = Utils.toRapidRequest(
                         broadcastingMessageBuilder.setShouldDeliver(false).build()
@@ -229,8 +239,16 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
                         new ErrorReportingCallback(msg.getContentCase(), myAddress));
 
                 // then to the rest
+
+                // except for when it's a batched alert message, we also do not send it to the sender
+                final Set<Endpoint> recipientsToSkip = new HashSet<>();
+                recipientsToSkip.add(myAddress);
+                if (msg.getContentCase().equals(RapidRequest.ContentCase.BATCHEDALERTMESSAGE)) {
+                    recipientsToSkip.add(msg.getBatchedAlertMessage().getSender());
+                }
+
                 myRecipients.forEach(node -> {
-                    if (!node.equals(myAddress)) {
+                    if (!recipientsToSkip.contains(node)) {
                         Futures.addCallback(messagingClient.sendMessage(node, msg),
                                 new ErrorReportingCallback(msg.getContentCase(), myAddress));
                     }
@@ -355,24 +373,27 @@ public class ConsistentHashBroadcaster implements IBroadcaster {
         private FastRoundPhase2bMessage compressConsensusMessages(final List<FastRoundPhase2bMessage> messages) {
             // compress all the messages into one
             final Map<List<Endpoint>, BitSet> allProposals = new HashMap<>();
+            final Map<List<Endpoint>, Long> allProposalConfigurationIds = new HashMap<>();
             for (final FastRoundPhase2bMessage consensusMessage : messages) {
                 for (final Proposal proposal : consensusMessage.getProposalsList()) {
                     final BitSet allVotes = allProposals.computeIfAbsent(proposal.getEndpointsList(),
                             endpoints -> BitSet.valueOf(proposal.getVotes().toByteArray()));
                     allVotes.or(BitSet.valueOf(proposal.getVotes().toByteArray()));
                     allProposals.put(proposal.getEndpointsList(), allVotes);
+                    allProposalConfigurationIds.put(proposal.getEndpointsList(), proposal.getConfigurationId());
                 }
             }
             final List<Proposal> allProposalMessages = new ArrayList<>();
             allProposals.entrySet().forEach(entry -> {
                 final Proposal proposal = Proposal.newBuilder()
+                        // configuration IDs should be stable for proposals affecting the same nodes
+                        .setConfigurationId(allProposalConfigurationIds.get(entry.getKey()))
                         .addAllEndpoints(entry.getKey())
                         .setVotes(ByteString.copyFrom(entry.getValue().toByteArray()))
                         .build();
                 allProposalMessages.add(proposal);
             });
             final FastRoundPhase2bMessage batched = FastRoundPhase2bMessage.newBuilder()
-                    .setConfigurationId(membershipView.getCurrentConfigurationId())
                     .addAllProposals(allProposalMessages)
                     .build();
             return batched;

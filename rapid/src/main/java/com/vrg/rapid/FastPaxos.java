@@ -101,11 +101,11 @@ class FastPaxos {
         final BitSet votes = new BitSet(memberList.size());
         votes.set(myIndex);
         final Proposal proposalAndVotes = Proposal.newBuilder()
+                .setConfigurationId(configurationId)
                 .addAllEndpoints(proposal)
                 .setVotes(ByteString.copyFrom(votes.toByteArray()))
                 .build();
         final FastRoundPhase2bMessage consensusMessage = FastRoundPhase2bMessage.newBuilder()
-                .setConfigurationId(configurationId)
                 .addProposals(proposalAndVotes)
                 .build();
         final RapidRequest proposalMessage = Utils.toRapidRequest(consensusMessage);
@@ -131,17 +131,22 @@ class FastPaxos {
      * @param proposalMessage the membership change proposal towards a configuration change.
      */
     private void handleFastRoundProposal(final FastRoundPhase2bMessage proposalMessage) {
-        if (proposalMessage.getConfigurationId() != configurationId) {
-            LOG.warn("Settings ID mismatch for proposal: current_config:{} proposal of size:{}", configurationId,
-                    proposalMessage.getProposalsCount());
-            return;
-        }
-
         if (decided.get()) {
             return;
         }
 
-        for (final Proposal proposal : proposalMessage.getProposalsList()) {
+        proposalMessage
+                .getProposalsList()
+                .stream()
+                .filter(proposal -> {
+                    final boolean hasSameConfigurationId = proposal.getConfigurationId() == configurationId;
+                    if (!hasSameConfigurationId) {
+                        LOG.warn("Settings ID mismatch for proposal: current_config:{} proposal_config:{}" +
+                                        "proposal of size {}", configurationId, proposal.getConfigurationId(),
+                                        proposal.getEndpointsCount());
+                    }
+                    return hasSameConfigurationId;
+                }).forEach(proposal -> {
             if (LOG.isTraceEnabled()) {
                 LOG.trace("Received proposal for {} nodes", proposal.getEndpointsCount());
             }
@@ -180,7 +185,7 @@ class FastPaxos {
                     }
                 }
             }
-        }
+        });
 
     }
 

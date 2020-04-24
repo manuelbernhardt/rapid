@@ -602,8 +602,8 @@ public class ClusterTest {
         }
         countingClients.forEach((node, client) -> {
             if (!broadcasters.contains(node) && !node.equals(seedEndpoint)) {
-                // seed node + observers + subjects + broadcaster
-                final int maximumConnections = 1 + 10 + 10 + 1;
+                // seed node + observers + subjects + broadcaster + myself
+                final int maximumConnections = 1 + 10 + 10 + 1 + 1;
                 assertTrue(client.getEndpointCount() > 0);
                 assertTrue("Node " + node + " has too many connections: " + client.getEndpointCount(),
                         client.getEndpointCount() <= maximumConnections);
